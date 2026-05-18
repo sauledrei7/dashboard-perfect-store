@@ -216,6 +216,10 @@ def adaptar_tiendas(df: pd.DataFrame) -> pd.DataFrame:
         'tienda_visitada': 'Tienda Visitada',
         'es_ps': 'PS FINAL',
         'cumplio_4': 'CUMPLIO 4',
+        'obj_whisky': 'Objetivo Whisky',
+        'obj_tequila': 'Objetivo Tequila',
+        'obj_vodka': 'Objetivo Vodka',
+        'obj_exh': 'Objetivo Puntos HS',
     })
     # Las columnas que esperan los componentes
     if 'Tienda Visitada' in df.columns:
@@ -253,6 +257,10 @@ def adaptar_detalle(df: pd.DataFrame) -> pd.DataFrame:
         'exh_v_bi': 'EXH BI V',
         'cumplio_2': 'CUMPLIO 2',
         'cumplio_4': 'CUMPLIO 4',
+        'obj_whisky': 'Objetivo Whisky',
+        'obj_tequila': 'Objetivo Tequila',
+        'obj_vodka': 'Objetivo Vodka',
+        'obj_exh': 'Objetivo Puntos HS',
     })
     if 'Incidencia' in df.columns:
         df['Incidencia'] = df['Incidencia'].astype(int)
