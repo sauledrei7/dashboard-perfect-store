@@ -45,7 +45,16 @@ def render(periodo_id: str):
 
     # Tarjeta principal
     nombre = str(info.get('Tienda', 'Sin nombre'))
-    canal = str(info.get('Canal', 'Autoservicio')).title()
+    canal_raw = info.get('CANAL', info.get('Canal', 'Sin canal'))
+    # Mapear a etiqueta amigable
+    canal_map = {
+        'AUTOSERVICIOS': 'Autoservicio',
+        'CASH&CARRY': 'Cash & Carry',
+        'CASH & CARRY': 'Cash & Carry',
+        'MAYORISTAS': 'Mayorista',
+        'DEPARTAMENTALES': 'Departamental',
+    }
+    canal = canal_map.get(str(canal_raw).upper().strip(), str(canal_raw).title())
     es_ps = info.get('PS FINAL') == 1
     carita = "😄" if es_ps else "😞"
     estado_bg = COLOR_GREEN_PALE if es_ps else COLOR_RED_PALE
@@ -67,10 +76,63 @@ def render(periodo_id: str):
     detalle = detalle.sort_values('Semana')
     semanas = detalle['Semana'].tolist()
 
-    _render_kpi(detalle, semanas, 'Total Whisky', "SOS Whisky", 35, es_pct=True)
-    _render_kpi(detalle, semanas, 'Total tequila', "SOS Tequila", 30, es_pct=True)
-    _render_kpi(detalle, semanas, 'Total vodka', "SOS Vodka", 25, es_pct=True)
-    _render_kpi(detalle, semanas, 'Puntos Promedio Exhibición', "EXH Puntos", 4, es_pct=False)
+    # Tomar objetivos de la PRIMERA fila no-incidencia (todas las semanas tienen el mismo obj)
+    fila_obj = detalle[detalle.get('Incidencia', 0) != 1]
+    if len(fila_obj) == 0:
+        fila_obj = detalle
+    fila_obj = fila_obj.iloc[0] if len(fila_obj) > 0 else None
+    
+    # Helper: obtener objetivo desde detalle o info, sin defaults hardcodeados
+    def _get_obj(key):
+        v = None
+        if fila_obj is not None and key in fila_obj.index:
+            v = fila_obj.get(key)
+            if pd.isna(v): v = None
+        if v is None and info:
+            v = info.get(key)
+            if pd.isna(v): v = None
+        return v
+    
+    obj_w = _get_obj('Objetivo Whisky')
+    obj_t = _get_obj('Objetivo Tequila')
+    obj_v = _get_obj('Objetivo Vodka')
+    obj_e = _get_obj('Objetivo Puntos HS')
+    
+    # Si vienen en escala 0-1, multiplicar por 100. Si en 0-100, dejar igual.
+    if obj_w is not None and obj_w <= 1.5: obj_w *= 100
+    if obj_t is not None and obj_t <= 1.5: obj_t *= 100
+    if obj_v is not None and obj_v <= 1.5: obj_v *= 100
+    
+    # Detectar si es bonus (Mayoreo/Departamental)
+    canal_actual = info.get('CANAL', info.get('Canal', '')).upper().strip() if info else ''
+    es_bonus = canal_actual in ('MAYORISTAS', 'DEPARTAMENTALES')
+    canal_label = 'Mayoreo' if canal_actual == 'MAYORISTAS' else ('Departamental' if canal_actual == 'DEPARTAMENTALES' else canal_actual.title())
+    
+    # Si es Mayoreo o Departamental: SIEMPRE mostrar aviso (con o sin AOP)
+    if es_bonus:
+        sin_aop = (obj_w is None and obj_t is None and obj_v is None)
+        if sin_aop:
+            mensaje_extra = "Esta tienda no tiene objetivos SOS asignados."
+        else:
+            mensaje_extra = "Esta tienda tiene objetivos SOS, pero no cuenta al denominador del bono."
+        r.html(f"""
+        <div style="background:{COLOR_PINK_PALE};border-radius:12px;padding:14px;margin:14px 0;border:0.5px solid {COLOR_BLUE_BORDER};">
+            <p style="font-size:13px;color:{COLOR_NAVY};margin:0;line-height:1.5;">
+                ⭐ Esta tienda es de canal <strong>{canal_label}</strong>. {mensaje_extra}
+                Si logra ser PS, suma como <strong>BONUS</strong> al numerador del cálculo del bono.
+            </p>
+        </div>
+        """)
+    
+    # Renderizar KPIs (cada uno se autoexcluye si su objetivo es None)
+    if not (obj_w is None and obj_t is None and obj_v is None):
+        _render_kpi(detalle, semanas, 'Total Whisky', "SOS Whisky", obj_w, es_pct=True)
+        _render_kpi(detalle, semanas, 'Total tequila', "SOS Tequila", obj_t, es_pct=True)
+        _render_kpi(detalle, semanas, 'Total vodka', "SOS Vodka", obj_v, es_pct=True)
+        _render_kpi(detalle, semanas, 'Puntos Promedio Exhibición', "EXH Puntos", obj_e, es_pct=False)
+    elif obj_e is not None:
+        # Sin SOS pero con EXH: mostrar solo EXH
+        _render_kpi(detalle, semanas, 'Puntos Promedio Exhibición', "EXH Puntos", obj_e, es_pct=False)
 
     _render_tabla_exh(detalle, semanas)
     _render_visitas(detalle, semanas)
@@ -90,6 +152,16 @@ def render(periodo_id: str):
 def _render_kpi(detalle, semanas, columna, titulo, objetivo, es_pct=True):
     """Tarjeta con valores por semana + promedio."""
     if columna not in detalle.columns:
+        return
+    
+    # Si el objetivo es None (tienda sin AOP, ej. Mayorista), no mostramos esta sección
+    if objetivo is None or (isinstance(objetivo, float) and pd.isna(objetivo)):
+        return
+    
+    # Asegurar que objetivo es numérico
+    try:
+        objetivo = float(objetivo)
+    except (ValueError, TypeError):
         return
 
     valores = []
