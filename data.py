@@ -25,7 +25,7 @@ def _get_client() -> Client:
 # ============================================================
 # CACHÉ DE PERIODOS
 # ============================================================
-@st.cache_data(ttl=300)
+@st.cache_data(ttl=600)
 def listar_periodos() -> pd.DataFrame:
     """Lista todos los periodos disponibles (para el selector)."""
     sb = _get_client()
@@ -44,7 +44,7 @@ def get_periodo_default() -> str:
 # ============================================================
 # DATOS DEL PROMOTOR
 # ============================================================
-@st.cache_data(ttl=60, show_spinner=False)
+@st.cache_data(ttl=300, show_spinner=False)
 def get_resumen_promotor(ruta: str, periodo_id: str) -> dict:
     """KPIs del promotor en un periodo específico."""
     sb = _get_client()
@@ -54,7 +54,7 @@ def get_resumen_promotor(ruta: str, periodo_id: str) -> dict:
     return r.data[0]
 
 
-@st.cache_data(ttl=60, show_spinner=False)
+@st.cache_data(ttl=300, show_spinner=False)
 def get_tiendas_de_ruta(ruta: str, periodo_id: str) -> pd.DataFrame:
     """Tiendas del promotor en un periodo."""
     sb = _get_client()
@@ -62,7 +62,7 @@ def get_tiendas_de_ruta(ruta: str, periodo_id: str) -> pd.DataFrame:
     return pd.DataFrame(r.data) if r.data else pd.DataFrame()
 
 
-@st.cache_data(ttl=60, show_spinner=False)
+@st.cache_data(ttl=300, show_spinner=False)
 def get_tiendas_cerca_ps(ruta: str, periodo_id: str, top_n: int = 3) -> pd.DataFrame:
     """Tiendas capturadas que NO son PS aún (oportunidades)."""
     df = get_tiendas_de_ruta(ruta, periodo_id)
@@ -75,7 +75,7 @@ def get_tiendas_cerca_ps(ruta: str, periodo_id: str, top_n: int = 3) -> pd.DataF
 # ============================================================
 # DATOS DEL SUPERVISOR
 # ============================================================
-@st.cache_data(ttl=60, show_spinner=False)
+@st.cache_data(ttl=300, show_spinner=False)
 def get_resumen_supervisor(supervisor: str, periodo_id: str) -> dict:
     """KPIs del supervisor en un periodo."""
     sb = _get_client()
@@ -85,7 +85,7 @@ def get_resumen_supervisor(supervisor: str, periodo_id: str) -> dict:
     return r.data[0]
 
 
-@st.cache_data(ttl=60, show_spinner=False)
+@st.cache_data(ttl=300, show_spinner=False)
 def get_promotores_de_supervisor(supervisor: str, periodo_id: str) -> pd.DataFrame:
     """Promotores asignados a un supervisor en un periodo."""
     sb = _get_client()
@@ -115,7 +115,7 @@ def get_mejor_y_peor_promotor(supervisor: str, periodo_id: str):
 # ============================================================
 # DETALLE DE TIENDA
 # ============================================================
-@st.cache_data(ttl=60, show_spinner=False)
+@st.cache_data(ttl=300, show_spinner=False)
 def get_detalle_tienda(curt: str, periodo_id: str) -> pd.DataFrame:
     """Detalle semanal de una tienda en un periodo."""
     sb = _get_client()
@@ -123,7 +123,7 @@ def get_detalle_tienda(curt: str, periodo_id: str) -> pd.DataFrame:
     return pd.DataFrame(r.data) if r.data else pd.DataFrame()
 
 
-@st.cache_data(ttl=60, show_spinner=False)
+@st.cache_data(ttl=300, show_spinner=False)
 def get_tienda_info(curt: str, periodo_id: str) -> dict:
     """Info de la tienda (1 fila de resumen_tienda)."""
     sb = _get_client()
@@ -270,7 +270,7 @@ def adaptar_detalle(df: pd.DataFrame) -> pd.DataFrame:
     return df
 
 
-@st.cache_data(ttl=60)
+@st.cache_data(ttl=300)
 def get_periodo_descripcion(periodo_id: str) -> str:
     """Devuelve la descripción del periodo (ej. 'Mayo 2026 (semanas 18-19)')."""
     if not periodo_id:
