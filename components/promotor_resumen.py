@@ -17,13 +17,14 @@ from styles.theme import (
 )
 from data import (
     get_resumen_promotor, get_tiendas_de_ruta, get_tiendas_cerca_ps,
-    adaptar_promotor, adaptar_tiendas
+    adaptar_promotor, adaptar_tiendas, get_periodo_descripcion
 )
 
 
 def render(usuario: dict, periodo_id: str):
     """Renderiza la pantalla del resumen del promotor."""
     ruta = usuario['identificador']
+    periodo_desc = get_periodo_descripcion(periodo_id)
     resumen = adaptar_promotor(get_resumen_promotor(ruta, periodo_id))
 
     if resumen is None:
@@ -56,7 +57,7 @@ def render(usuario: dict, periodo_id: str):
     r.html(f"""
     <div style="background:{COLOR_BLUE_BG};border-radius:10px;padding:10px 12px;margin:14px 0 12px 0;border:0.5px solid {COLOR_BLUE_BORDER};">
         <span style="font-size:13px;color:{COLOR_TEXT_SECONDARY};">📅 Periodo:</span>
-        <span style="font-size:13px;font-weight:500;color:{COLOR_NAVY};margin-left:6px;">Abril (S13 - S17)</span>
+        <span style="font-size:13px;font-weight:500;color:{COLOR_NAVY};margin-left:6px;">{periodo_desc}</span>
     </div>
     """)
 

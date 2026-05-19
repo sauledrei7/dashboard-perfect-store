@@ -17,13 +17,14 @@ from styles.theme import (
 from data import (
     get_resumen_supervisor, get_promotores_de_supervisor,
     get_promotores_cerca_80, get_mejor_y_peor_promotor,
-    adaptar_supervisor, adaptar_promotor,
+    adaptar_supervisor, adaptar_promotor, get_periodo_descripcion,
 )
 
 
 def render(usuario: dict, periodo_id: str):
     """Resumen del supervisor."""
     supervisor = usuario['identificador']
+    periodo_desc = get_periodo_descripcion(periodo_id)
     resumen = adaptar_supervisor(get_resumen_supervisor(supervisor, periodo_id))
     if resumen is None:
         st.error(f"No se encontraron datos para supervisor {supervisor}")
@@ -58,7 +59,7 @@ def render(usuario: dict, periodo_id: str):
     r.html(f"""
     <div style="background:{COLOR_BLUE_BG};border-radius:10px;padding:10px 12px;margin:14px 0 12px 0;border:0.5px solid {COLOR_BLUE_BORDER};">
         <span style="font-size:13px;color:{COLOR_TEXT_SECONDARY};">📅 Periodo:</span>
-        <span style="font-size:13px;font-weight:500;color:{COLOR_NAVY};margin-left:6px;">Abril (S13 - S17)</span>
+        <span style="font-size:13px;font-weight:500;color:{COLOR_NAVY};margin-left:6px;">{periodo_desc}</span>
     </div>
     """)
 

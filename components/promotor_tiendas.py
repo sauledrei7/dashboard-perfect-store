@@ -12,12 +12,13 @@ from styles.theme import (
     COLOR_AMBER, COLOR_RED, COLOR_RED_DARK, COLOR_RED_PALE, COLOR_RED_BORDER,
     COLOR_WHITE,
 )
-from data import get_tiendas_de_ruta, adaptar_tiendas
+from data import get_tiendas_de_ruta, adaptar_tiendas, get_periodo_corto
 
 
 def render(usuario: dict, periodo_id: str):
     """Renderiza la lista de tiendas del promotor."""
     ruta = usuario['identificador']
+    periodo_corto = get_periodo_corto(periodo_id)
     tiendas = adaptar_tiendas(get_tiendas_de_ruta(ruta, periodo_id))
 
     # Header con back button
@@ -30,7 +31,7 @@ def render(usuario: dict, periodo_id: str):
         r.html(f"""
         <div>
             <p style="font-size:17px;font-weight:500;margin:0;color:{COLOR_NAVY};">Mis tiendas</p>
-            <p style="font-size:12px;color:{COLOR_TEXT_SECONDARY};margin:2px 0 0;">{len(tiendas)} tiendas · Abril</p>
+            <p style="font-size:12px;color:{COLOR_TEXT_SECONDARY};margin:2px 0 0;">{len(tiendas)} tiendas · {periodo_corto}</p>
         </div>
         """)
 

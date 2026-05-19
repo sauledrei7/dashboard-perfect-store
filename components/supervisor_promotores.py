@@ -13,12 +13,13 @@ from styles.theme import (
     COLOR_AMBER, COLOR_RED, COLOR_RED_DARK, COLOR_RED_PALE, COLOR_RED_BORDER,
     COLOR_WHITE,
 )
-from data import get_promotores_de_supervisor, adaptar_promotor
+from data import get_promotores_de_supervisor, adaptar_promotor, get_periodo_corto
 
 
 def render(usuario: dict, periodo_id: str):
     """Lista de promotores del supervisor."""
     supervisor = usuario['identificador']
+    periodo_corto = get_periodo_corto(periodo_id)
     promotores_raw = get_promotores_de_supervisor(supervisor, periodo_id)
     if len(promotores_raw)==0:
         st.info('No hay promotores para este periodo')
@@ -36,7 +37,7 @@ def render(usuario: dict, periodo_id: str):
         r.html(f"""
         <div>
             <p style="font-size:17px;font-weight:500;margin:0;color:{COLOR_NAVY};">Mis promotores</p>
-            <p style="font-size:12px;color:{COLOR_TEXT_SECONDARY};margin:2px 0 0;">{len(promotores)} promotores · Abril</p>
+            <p style="font-size:12px;color:{COLOR_TEXT_SECONDARY};margin:2px 0 0;">{len(promotores)} promotores · {periodo_corto}</p>
         </div>
         """)
 
