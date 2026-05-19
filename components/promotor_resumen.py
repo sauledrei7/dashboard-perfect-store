@@ -28,7 +28,16 @@ def render(usuario: dict, periodo_id: str):
     resumen = adaptar_promotor(get_resumen_promotor(ruta, periodo_id))
 
     if resumen is None:
-        st.error(f"No se encontraron datos para la ruta {ruta}")
+        r.html(f"""
+        <div style="background:{COLOR_PINK_PALE};border-radius:14px;padding:30px;margin:30px 0;text-align:center;border:0.5px solid {COLOR_BLUE_BORDER};">
+            <div style="font-size:42px;margin-bottom:10px;">📅</div>
+            <p style="font-size:16px;color:{COLOR_NAVY};font-weight:500;margin:0 0 8px;">Aún no hay datos para {periodo_desc}</p>
+            <p style="font-size:13px;color:{COLOR_TEXT_SECONDARY};margin:0;line-height:1.5;">
+                Si crees que es un error, contacta al administrador.<br>
+                Mientras tanto, prueba cambiar el periodo arriba.
+            </p>
+        </div>
+        """)
         return
 
     candado_abierto = bool(resumen['CANDADO_ABIERTO'])
