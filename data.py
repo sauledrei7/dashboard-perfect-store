@@ -268,3 +268,27 @@ def adaptar_detalle(df: pd.DataFrame) -> pd.DataFrame:
         if c in df.columns:
             df[c] = pd.to_numeric(df[c], errors='coerce') / 100.0
     return df
+
+
+@st.cache_data(ttl=60)
+def get_periodo_descripcion(periodo_id: str) -> str:
+    """Devuelve la descripción del periodo (ej. 'Mayo 2026 (semanas 18-19)')."""
+    if not periodo_id:
+        return ""
+    sb = _get_client()
+    r = sb.table('periodos').select('descripcion, mes, semana_inicio, semana_fin').eq('periodo_id', periodo_id).limit(1).execute()
+    if not r.data:
+        return periodo_id
+    row = r.data[0]
+    return row.get('descripcion') or f"{row.get('mes','')} (S{row.get('semana_inicio','')} - S{row.get('semana_fin','')})"
+
+
+def get_periodo_corto(periodo_id: str) -> str:
+    """Devuelve solo el mes (ej. 'Mayo')."""
+    if not periodo_id:
+        return ""
+    sb = _get_client()
+    r = sb.table('periodos').select('mes').eq('periodo_id', periodo_id).limit(1).execute()
+    if not r.data:
+        return periodo_id
+    return r.data[0].get('mes', '')

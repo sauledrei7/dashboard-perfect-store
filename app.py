@@ -99,7 +99,16 @@ def selector_periodo():
             return
 
         opciones = df_periodos['periodo_id'].tolist()
-        descripciones = dict(zip(df_periodos['periodo_id'], df_periodos['descripcion']))
+        # Fallback: si la descripción está vacía, construirla
+        descripciones = {}
+        for _, row in df_periodos.iterrows():
+            pid = row['periodo_id']
+            desc = row.get('descripcion') if 'descripcion' in row else None
+            if not desc or str(desc).strip() == '' or str(desc).strip() == 'nan':
+                mes = row.get('mes', '')
+                anio = row.get('anio', '')
+                desc = f"{mes} {anio}" if mes else pid
+            descripciones[pid] = desc
 
         actual = get_periodo_actual() or opciones[0]
         idx_actual = opciones.index(actual) if actual in opciones else 0
@@ -110,13 +119,30 @@ def selector_periodo():
             format_func=lambda x: descripciones.get(x, x),
             index=idx_actual,
             key="selector_periodo",
-            label_visibility="collapsed",
         )
         if seleccionado != actual:
             set_periodo_actual(seleccionado)
+            # Scroll al inicio al cambiar periodo
+            _scroll_top()
             st.rerun()
     except Exception as e:
         st.error(f"Error cargando periodos: {e}")
+
+
+def _scroll_top():
+    """Inyecta JavaScript para hacer scroll al inicio de la pantalla."""
+    import streamlit.components.v1 as components
+    components.html(
+        """
+        <script>
+            // Hacer scroll al top en el documento padre
+            window.parent.document.querySelector('section.main').scrollTo(0, 0);
+            window.parent.scrollTo(0, 0);
+            window.scrollTo(0, 0);
+        </script>
+        """,
+        height=0,
+    )
 
 
 # ============================================================
@@ -130,6 +156,12 @@ def main():
     usuario = get_usuario_actual()
     pantalla = st.session_state.get('pantalla', 'resumen_promotor')
     periodo_id = get_periodo_actual()
+
+    # Detectar cambio de pantalla y hacer scroll al inicio
+    pantalla_anterior = st.session_state.get('_pantalla_anterior')
+    if pantalla_anterior != pantalla:
+        _scroll_top()
+        st.session_state['_pantalla_anterior'] = pantalla
 
     # Mostrar selector de periodo en pantallas principales
     if pantalla in ('resumen_promotor', 'resumen_supervisor'):
