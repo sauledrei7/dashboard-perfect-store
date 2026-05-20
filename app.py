@@ -12,6 +12,8 @@ import render as r
 from styles.theme import (
     CSS_GLOBAL, COLOR_PINK_PRIMARY, COLOR_BLUE_PRIMARY, COLOR_NAVY,
     COLOR_TEXT_SECONDARY, COLOR_BLUE_BORDER, COLOR_PINK_PALE, COLOR_BLUE_PALE,
+    COLOR_GREEN, COLOR_GREEN_PALE, COLOR_AMBER, COLOR_RED_DARK, COLOR_RED_PALE,
+    COLOR_RED_BORDER, COLOR_WHITE, COLOR_BLUE_BG,
 )
 from auth import (
     autenticar, esta_autenticado, get_usuario_actual, cerrar_sesion,
@@ -19,7 +21,7 @@ from auth import (
 )
 from components import promotor_resumen, promotor_tiendas, tienda_detalle
 from components import supervisor_resumen, supervisor_promotores
-from data import listar_periodos, get_periodo_default, get_tiendas_de_ruta, adaptar_tiendas
+from data import listar_periodos, get_periodo_default, get_tiendas_de_ruta, adaptar_tiendas, get_resumen_promotor, adaptar_promotor
 
 
 # ============================================================
@@ -224,8 +226,61 @@ def _render_tiendas_promotor_para_supervisor(usuario, periodo_id):
         """)
 
     st.write("")
+
+    # Tarjeta de resumen del bono del promotor (con bono potencial si candado cerrado)
+    kpis = adaptar_promotor(get_resumen_promotor(ruta_sel, periodo_id))
+    if kpis:
+        _render_bono_promotor_para_supervisor(kpis)
+
     for _, t in tiendas.iterrows():
         _render_tarjeta_tienda(t)
+
+
+def _render_bono_promotor_para_supervisor(k):
+    """Tarjeta de contexto del bono que ve el supervisor al abrir un promotor.
+    Cuando el candado está cerrado, muestra el bono POTENCIAL y qué falta."""
+    candado = bool(k['CANDADO_ABIERTO'])
+    bono_final = k['BONO_FINAL_PCT']
+    bono_potencial = k.get('BONO_POTENCIAL_PCT', bono_final)
+    pct_ps = k['PCT_PS_RUTA']
+    efectividad = k.get('EFECTIVIDAD_PCT', 0)
+    faltan = int(k.get('VISITAS_FALTANTES_95', 0) or 0)
+
+    if candado:
+        valor = bono_final
+        etiqueta = "Bono actual"
+        color = COLOR_GREEN if bono_final >= 80 else (COLOR_AMBER if bono_final >= 50 else COLOR_RED_DARK)
+        fondo = COLOR_GREEN_PALE if bono_final >= 80 else COLOR_BLUE_BG
+        borde = COLOR_BLUE_BORDER
+        nota = ""
+    else:
+        valor = bono_potencial
+        etiqueta = "Bono potencial 🔒"
+        color = COLOR_RED_DARK
+        fondo = COLOR_RED_PALE
+        borde = COLOR_RED_BORDER
+        falta_txt = (f"Le faltan <b>{faltan}</b> visitas para llegar al 95% y desbloquearlo."
+                     if faltan > 0 else "Necesita llegar al 95% de efectividad para desbloquearlo.")
+        nota = (f'<p style="font-size:11px;color:{COLOR_RED_DARK};margin:8px 0 0;line-height:1.4;">'
+                f'⚠️ Candado cerrado · efectividad {efectividad:.0f}%. {falta_txt}</p>')
+
+    ps_color = COLOR_GREEN if pct_ps >= 80 else (COLOR_AMBER if pct_ps >= 60 else COLOR_RED_DARK)
+
+    r.html(f"""
+    <div style="background:{fondo};border-radius:12px;padding:14px 16px;margin-bottom:14px;border:0.5px solid {borde};">
+        <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:12px;">
+            <div>
+                <p style="font-size:11px;color:{COLOR_TEXT_SECONDARY};margin:0;">{etiqueta}</p>
+                <p style="font-size:28px;font-weight:600;margin:2px 0 0;color:{color};">{valor:.0f}%</p>
+            </div>
+            <div style="text-align:right;">
+                <p style="font-size:11px;color:{COLOR_TEXT_SECONDARY};margin:0;">% Perfect Store</p>
+                <p style="font-size:20px;font-weight:500;margin:2px 0 0;color:{ps_color};">{pct_ps:.0f}%</p>
+            </div>
+        </div>
+        {nota}
+    </div>
+    """)
 
 
 if __name__ == "__main__":
