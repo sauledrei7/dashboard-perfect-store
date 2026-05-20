@@ -55,10 +55,20 @@ def _render_tarjeta_promotor(p):
     ruta = p['RUTA']
     candado = bool(p['CANDADO_ABIERTO'])
     bono_final = p['BONO_FINAL_PCT']
+    bono_potencial = p.get('BONO_POTENCIAL_PCT', bono_final)
     pct_ps = p['PCT_PS_RUTA']
     mult_oos = p['MULT_OOS_PCT']
     tiendas_tot = int(p['TIENDAS_TOTALES'])
     elegibles = int(p['TIENDAS_ELEGIBLES'])
+
+    # Si el candado está cerrado, mostramos el bono POTENCIAL (lo que ganaría
+    # si abriera el candado) en lugar de un 0% sin contexto.
+    if not candado:
+        bono_label = "Bono pot."
+        bono_mostrar = bono_potencial
+    else:
+        bono_label = "Bono"
+        bono_mostrar = bono_final
 
     # Color del bono
     if not candado:
@@ -102,8 +112,8 @@ def _render_tarjeta_promotor(p):
         </div>
         <div style="display:grid;grid-template-columns:1fr 1fr 1fr 1fr;gap:6px;">
             <div style="text-align:center;background:{bono_bg};border-radius:8px;padding:6px 4px;">
-                <p style="font-size:9px;color:{COLOR_TEXT_SECONDARY};margin:0;">Bono</p>
-                <p style="font-size:14px;font-weight:500;margin:2px 0 0;color:{bono_color};">{bono_final:.0f}%</p>
+                <p style="font-size:9px;color:{COLOR_TEXT_SECONDARY};margin:0;">{bono_label}</p>
+                <p style="font-size:14px;font-weight:500;margin:2px 0 0;color:{bono_color};">{bono_mostrar:.0f}%{'' if candado else ' 🔒'}</p>
             </div>
             <div style="text-align:center;background:{COLOR_BLUE_BG};border-radius:8px;padding:6px 4px;">
                 <p style="font-size:9px;color:{COLOR_TEXT_SECONDARY};margin:0;">% PS</p>
