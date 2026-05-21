@@ -105,6 +105,9 @@ def render(usuario: dict, periodo_id: str):
     # ===== KPIs %PS + OOS =====
     _render_kpis_supervisor(resumen)
 
+    # ===== Cuántos promotores cobran / no cobran =====
+    _render_cobran_no_cobran(supervisor, periodo_id)
+
     # ===== Promotores cerca del 80% =====
     _render_cerca_80(supervisor, periodo_id)
 
@@ -196,6 +199,38 @@ def _render_kpis_supervisor(resumen):
             <p style="font-size:11px;color:{COLOR_TEXT_SECONDARY};margin:0;">{int(resumen['NO_CONT_OOS'])} sin contestar de {int(resumen['OBJ_OOS'])}</p>
         </div>
         """)
+
+
+def _render_cobran_no_cobran(supervisor, periodo_id):
+    """Indicador: cuántos promotores cobrarán bono (candado abierto) y cuántos no."""
+    df = get_promotores_de_supervisor(supervisor, periodo_id)
+    if len(df) == 0:
+        return
+
+    total = len(df)
+    # Cobra = candado abierto Y al menos 1% de PS.
+    # No cobra = candado cerrado, O candado abierto pero 0% de PS.
+    cobran = int(((df['candado_abierto'] == True) & (df['pct_ps_ruta'] >= 1)).sum())
+    no_cobran = total - cobran
+
+    r.html(f"""
+    <div style="margin:14px 0;">
+        <p style="font-size:13px;font-weight:500;color:{COLOR_NAVY};margin:0 0 8px;">Tu equipo este mes</p>
+        <div style="display:flex;gap:10px;">
+            <div style="flex:1;background:{COLOR_GREEN_PALE};border-radius:12px;padding:14px;text-align:center;border:0.5px solid {COLOR_GREEN_BORDER};">
+                <p style="font-size:28px;font-weight:600;color:{COLOR_GREEN};margin:0;line-height:1;">{cobran}</p>
+                <p style="font-size:12px;color:{COLOR_GREEN_TEXT};margin:6px 0 0;">✅ Cobrarán bono</p>
+            </div>
+            <div style="flex:1;background:{COLOR_RED_PALE};border-radius:12px;padding:14px;text-align:center;border:0.5px solid {COLOR_RED_BORDER};">
+                <p style="font-size:28px;font-weight:600;color:{COLOR_RED_DARK};margin:0;line-height:1;">{no_cobran}</p>
+                <p style="font-size:12px;color:{COLOR_RED_DARK};margin:6px 0 0;">🔒 No cobrarán</p>
+            </div>
+        </div>
+        <p style="font-size:11px;color:{COLOR_TEXT_SECONDARY};margin:8px 0 0;text-align:center;">
+            De {total} promotores · cobra quien cierra con candado abierto (≥95% visitas) y al menos 1% de PS
+        </p>
+    </div>
+    """)
 
 
 def _render_cerca_80(supervisor, periodo_id):
