@@ -128,7 +128,9 @@ def selector_periodo():
             _scroll_top()
             st.rerun()
     except Exception as e:
-        st.error(f"Error cargando periodos: {e}")
+        # El detalle técnico va a los logs del servidor, no a la pantalla del usuario.
+        print(f"[PERIODOS ERROR] {e}")
+        st.error("No pudimos cargar los periodos en este momento. Intenta recargar la página.")
 
 
 def _scroll_top():

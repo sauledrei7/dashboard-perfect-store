@@ -84,7 +84,10 @@ def autenticar(input_usuario: str, password: str) -> dict:
         }
 
     except Exception as e:
-        st.error(f"Error de conexión: {e}")
+        # No mostramos el detalle técnico al usuario (evita filtrar info interna).
+        # El detalle queda en los logs del servidor para diagnóstico.
+        print(f"[AUTH ERROR] {e}")
+        st.error("No pudimos validar tu acceso en este momento. Intenta de nuevo en unos segundos.")
         return None
 
 
