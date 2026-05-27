@@ -80,11 +80,20 @@ def _render_tarjeta_tienda(tienda):
     else:
         canal_html = f'<span style="color:{COLOR_TEXT_SECONDARY};font-size:11px;">{canal.title() if canal else "Sin canal"}</span>'
 
-    # Mini semáforos (4 categorías)
+    # Mini semáforos (4 categorías) — usar objetivos REALES de la tienda
     sos_w = float(tienda.get('Total Whisky', 0) or 0) * 100
     sos_t = float(tienda.get('Total tequila', 0) or 0) * 100
     sos_v = float(tienda.get('Total vodka', 0) or 0) * 100
     exh = float(tienda.get('Puntos Promedio Exhibición', 0) or 0)
+    # Objetivos reales de esta tienda (vienen del AOP, pueden ser None si no hay)
+    obj_w = tienda.get('Objetivo Whisky')
+    obj_t = tienda.get('Objetivo Tequila')
+    obj_v = tienda.get('Objetivo Vodka')
+    obj_e = tienda.get('Objetivo Puntos HS')
+    if obj_w is not None and pd.isna(obj_w): obj_w = None
+    if obj_t is not None and pd.isna(obj_t): obj_t = None
+    if obj_v is not None and pd.isna(obj_v): obj_v = None
+    if obj_e is not None and pd.isna(obj_e): obj_e = None
 
     border_color = COLOR_RED_BORDER if (visitada and not es_ps) else COLOR_BLUE_BORDER
     opacity = "0.85" if es_mayo_depto else "1"
@@ -99,7 +108,7 @@ def _render_tarjeta_tienda(tienda):
             </div>
             <span style="background:{estado_bg};color:{estado_color};font-size:12px;padding:3px 10px;border-radius:8px;font-weight:500;">{estado_texto}</span>
         </div>
-        {_render_mini_semaforos(sos_w, sos_t, sos_v, exh) if visitada else ''}
+        {_render_mini_semaforos(sos_w, sos_t, sos_v, exh, obj_w, obj_t, obj_v, obj_e) if visitada else ''}
     </div>
     """)
 
@@ -111,19 +120,34 @@ def _render_tarjeta_tienda(tienda):
         st.rerun()
 
 
-def _render_mini_semaforos(sos_w, sos_t, sos_v, exh):
-    """4 cápsulas pequeñas con semáforos."""
+def _render_mini_semaforos(sos_w, sos_t, sos_v, exh, obj_w, obj_t, obj_v, obj_e):
+    """4 cápsulas pequeñas con semáforos.
+    Usa los objetivos REALES de la tienda (no valores fijos).
+    Cada semáforo es independiente: refleja si esa categoría cumple su objetivo individual."""
     def color(val, obj):
-        if obj == 0: return COLOR_RED
+        if obj is None or obj == 0:
+            return COLOR_TEXT_SECONDARY  # gris si no hay objetivo cargado
+        # obj viene del adaptador como porcentaje decimal (ej. 0.30 = 30%)
+        # val ya viene como porcentaje entero (ej. 56.0)
+        pct = val / (obj * 100)
+        if pct >= 1.0: return COLOR_GREEN
+        if pct >= 0.80: return COLOR_AMBER
+        return COLOR_RED
+
+    c_w = color(sos_w, obj_w)
+    c_t = color(sos_t, obj_t)
+    c_v = color(sos_v, obj_v)
+
+    # EXH: objetivo viene en puntos (no porcentaje)
+    def color_exh(val, obj):
+        if obj is None or obj == 0:
+            return COLOR_TEXT_SECONDARY
         pct = val / obj
         if pct >= 1.0: return COLOR_GREEN
         if pct >= 0.80: return COLOR_AMBER
         return COLOR_RED
 
-    c_w = color(sos_w, 35)
-    c_t = color(sos_t, 30)
-    c_v = color(sos_v, 25)
-    c_e = color(exh, 4)
+    c_e = color_exh(exh, obj_e)
 
     return f"""
     <div style="display:flex;gap:6px;padding-top:10px;border-top:0.5px solid {COLOR_BLUE_BORDER};">
