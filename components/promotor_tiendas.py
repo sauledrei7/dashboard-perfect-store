@@ -123,13 +123,12 @@ def _render_tarjeta_tienda(tienda):
 def _render_mini_semaforos(sos_w, sos_t, sos_v, exh, obj_w, obj_t, obj_v, obj_e):
     """4 cápsulas pequeñas con semáforos.
     Usa los objetivos REALES de la tienda (no valores fijos).
-    Cada semáforo es independiente: refleja si esa categoría cumple su objetivo individual."""
+    SOS y objetivos llegan al componente en la misma escala (0-100),
+    así que la comparación es directa."""
     def color(val, obj):
         if obj is None or obj == 0:
-            return COLOR_TEXT_SECONDARY  # gris si no hay objetivo cargado
-        # obj viene del adaptador como porcentaje decimal (ej. 0.30 = 30%)
-        # val ya viene como porcentaje entero (ej. 56.0)
-        pct = val / (obj * 100)
+            return COLOR_TEXT_SECONDARY  # gris si no hay objetivo
+        pct = val / obj
         if pct >= 1.0: return COLOR_GREEN
         if pct >= 0.80: return COLOR_AMBER
         return COLOR_RED
@@ -137,17 +136,7 @@ def _render_mini_semaforos(sos_w, sos_t, sos_v, exh, obj_w, obj_t, obj_v, obj_e)
     c_w = color(sos_w, obj_w)
     c_t = color(sos_t, obj_t)
     c_v = color(sos_v, obj_v)
-
-    # EXH: objetivo viene en puntos (no porcentaje)
-    def color_exh(val, obj):
-        if obj is None or obj == 0:
-            return COLOR_TEXT_SECONDARY
-        pct = val / obj
-        if pct >= 1.0: return COLOR_GREEN
-        if pct >= 0.80: return COLOR_AMBER
-        return COLOR_RED
-
-    c_e = color_exh(exh, obj_e)
+    c_e = color(exh, obj_e)   # EXH también es comparación directa (puntos vs puntos)
 
     return f"""
     <div style="display:flex;gap:6px;padding-top:10px;border-top:0.5px solid {COLOR_BLUE_BORDER};">
