@@ -134,19 +134,11 @@ def selector_periodo():
 
 
 def _scroll_top():
-    """Inyecta JavaScript para hacer scroll al inicio de la pantalla."""
-    import streamlit.components.v1 as components
-    components.html(
-        """
-        <script>
-            // Hacer scroll al top en el documento padre
-            window.parent.document.querySelector('section.main').scrollTo(0, 0);
-            window.parent.scrollTo(0, 0);
-            window.scrollTo(0, 0);
-        </script>
-        """,
-        height=0,
-    )
+    """Función desactivada: antes hacía scroll automático al cambiar de pantalla
+    usando st.components.v1.html, pero esa API se deprecó (2026-06-01).
+    Se dejó vacía para no romper las llamadas existentes en el código.
+    Si en el futuro quieres reactivar el scroll, esta es la única función a tocar."""
+    pass
 
 
 # ============================================================
