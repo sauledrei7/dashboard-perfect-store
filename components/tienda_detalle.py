@@ -15,7 +15,7 @@ from styles.theme import (
     COLOR_GREEN, COLOR_GREEN_PALE, COLOR_GREEN_TEXT,
     COLOR_AMBER, COLOR_AMBER_PALE, COLOR_RED_DARK, COLOR_RED_PALE, COLOR_WHITE,
 )
-from data import get_detalle_tienda, get_tienda_info, adaptar_detalle, adaptar_tiendas
+from data import get_detalle_tienda, get_tienda_info, adaptar_detalle, adaptar_tiendas, get_resumen_promotor, adaptar_promotor
 
 
 def render(periodo_id: str):
@@ -129,13 +129,13 @@ def render(periodo_id: str):
         _render_kpi(detalle, semanas, 'Total Whisky', "SOS Whisky", obj_w, es_pct=True)
         _render_kpi(detalle, semanas, 'Total tequila', "SOS Tequila", obj_t, es_pct=True)
         _render_kpi(detalle, semanas, 'Total vodka', "SOS Vodka", obj_v, es_pct=True)
-        _render_kpi(detalle, semanas, 'Puntos Promedio Exhibición', "EXH Puntos", obj_e, es_pct=False)
+        _render_kpi(detalle, semanas, 'Puntos Promedio Exhibición', "EXH", obj_e, es_pct=False)
     elif obj_e is not None:
         # Sin SOS pero con EXH: mostrar solo EXH
-        _render_kpi(detalle, semanas, 'Puntos Promedio Exhibición', "EXH Puntos", obj_e, es_pct=False)
+        _render_kpi(detalle, semanas, 'Puntos Promedio Exhibición', "EXH", obj_e, es_pct=False)
 
     _render_tabla_exh(detalle, semanas)
-    _render_visitas(detalle, semanas)
+    _render_visitas(detalle, semanas, periodo_id)
 
     incidencias = (detalle['Incidencia'] == 1).sum() if 'Incidencia' in detalle.columns else 0
     if incidencias > 0:
@@ -182,7 +182,13 @@ def _render_kpi(detalle, semanas, columna, titulo, objetivo, es_pct=True):
         return
     prom = sum(validos) / len(validos)
 
-    if prom >= objetivo:
+    # Si el objetivo es 0, la tienda no tiene meta cargada para esta categoría:
+    # mostramos los valores en gris con carita neutra (no podemos juzgar cumplimiento).
+    sin_objetivo = (objetivo == 0)
+
+    if sin_objetivo:
+        emoji = "😐"
+    elif prom >= objetivo:
         emoji = "😄"
     elif prom >= objetivo * 0.85:
         emoji = "😐"
@@ -198,6 +204,16 @@ def _render_kpi(detalle, semanas, columna, titulo, objetivo, es_pct=True):
                 f'<p style="font-size:11px;color:{COLOR_TEXT_SECONDARY};margin:0 0 4px;">S{int(s)}</p>'
                 f'<div style="background:{COLOR_BLUE_BG};border-radius:8px;padding:6px;">'
                 f'<p style="font-size:13px;font-weight:500;margin:0;color:{COLOR_TEXT_SECONDARY};">—</p>'
+                f'</div></div>'
+            )
+        elif sin_objetivo:
+            # Sin objetivo: gris siempre, sin juicio de cumplimiento
+            valor_txt = f"{v:.0f}%" if es_pct else f"{v:.0f}"
+            cuadros += (
+                f'<div style="text-align:center;">'
+                f'<p style="font-size:11px;color:{COLOR_TEXT_SECONDARY};margin:0 0 4px;">S{int(s)}</p>'
+                f'<div style="background:{COLOR_BLUE_BG};border-radius:8px;padding:6px;">'
+                f'<p style="font-size:13px;font-weight:500;margin:0;color:{COLOR_TEXT_SECONDARY};">{valor_txt}</p>'
                 f'</div></div>'
             )
         else:
@@ -218,7 +234,10 @@ def _render_kpi(detalle, semanas, columna, titulo, objetivo, es_pct=True):
             )
 
     prom_txt = f"{prom:.1f}%" if es_pct else f"{prom:.1f}"
-    obj_txt = f"objetivo {objetivo}%" if es_pct else f"objetivo {objetivo}"
+    if sin_objetivo:
+        obj_txt = "sin objetivo asignado"
+    else:
+        obj_txt = f"objetivo {objetivo}%" if es_pct else f"objetivo {objetivo}"
     n_sem = len(semanas)
 
     titulo_html = (
@@ -307,7 +326,7 @@ def _render_tabla_exh(detalle, semanas):
     r.html(tabla)
 
 
-def _render_visitas(detalle, semanas):
+def _render_visitas(detalle, semanas, periodo_id):
     n_sem = len(semanas)
     cuadros = ""
     for s in semanas:
@@ -318,6 +337,7 @@ def _render_visitas(detalle, semanas):
                 f'<p style="font-size:11px;color:{COLOR_TEXT_SECONDARY};margin:0 0 4px;">S{int(s)}</p>'
                 f'<div style="background:{COLOR_BLUE_BG};border-radius:8px;padding:6px;">'
                 f'<span style="font-size:18px;color:{COLOR_TEXT_SECONDARY};">—</span>'
+                f'<p style="font-size:10px;color:{COLOR_TEXT_SECONDARY};margin:2px 0 0;">Sin dato</p>'
                 f'</div></div>'
             )
             continue
@@ -328,6 +348,7 @@ def _render_visitas(detalle, semanas):
                 f'<p style="font-size:11px;color:{COLOR_TEXT_SECONDARY};margin:0 0 4px;">S{int(s)}</p>'
                 f'<div style="background:{COLOR_AMBER_PALE};border-radius:8px;padding:6px;">'
                 f'<span style="font-size:18px;">⚠️</span>'
+                f'<p style="font-size:10px;color:{COLOR_AMBER};margin:2px 0 0;">Incidencia</p>'
                 f'</div></div>'
             )
         else:
@@ -336,6 +357,7 @@ def _render_visitas(detalle, semanas):
                 f'<p style="font-size:11px;color:{COLOR_TEXT_SECONDARY};margin:0 0 4px;">S{int(s)}</p>'
                 f'<div style="background:{COLOR_GREEN_PALE};border-radius:8px;padding:6px;">'
                 f'<span style="font-size:18px;color:{COLOR_GREEN};">✓</span>'
+                f'<p style="font-size:10px;color:{COLOR_GREEN_TEXT};margin:2px 0 0;">Visitada</p>'
                 f'</div></div>'
             )
 
@@ -350,6 +372,65 @@ def _render_visitas(detalle, semanas):
         f'border:0.5px solid {COLOR_BLUE_BORDER};">'
         f'<div style="display:grid;grid-template-columns:repeat({n_sem}, 1fr);gap:6px;">'
         f'{cuadros}'
+        f'</div></div>'
+    )
+    r.html(tarjeta)
+
+    # ===== Multiplicador OOS del promotor (del mes, por ruta) =====
+    _render_multiplicador_oos(detalle, periodo_id)
+
+
+def _render_multiplicador_oos(detalle, periodo_id):
+    """Muestra el multiplicador OOS de la ruta del promotor (es del mes completo,
+    no por tienda ni por semana — así está definido en la lógica del bono)."""
+    if 'Ruta' not in detalle.columns or len(detalle) == 0:
+        return
+    ruta = detalle.iloc[0]['Ruta']
+    k = adaptar_promotor(get_resumen_promotor(ruta, periodo_id))
+    if not k:
+        return
+
+    mult = k.get('MULT_OOS_PCT', 100)
+    obj = int(k.get('OBJ_OOS', 0) or 0)
+    no_cont = int(k.get('NO_CONT_OOS', 0) or 0)
+
+    # Color según el multiplicador
+    if mult >= 95:
+        color = COLOR_GREEN
+        bg = COLOR_GREEN_PALE
+    elif mult >= 85:
+        color = COLOR_AMBER
+        bg = COLOR_AMBER_PALE
+    else:
+        color = COLOR_RED_DARK
+        bg = COLOR_RED_PALE
+
+    titulo = (
+        f'<p style="font-size:13px;color:{COLOR_TEXT_SECONDARY};margin:14px 4px 8px;font-weight:500;">'
+        f'Multiplicador OOS</p>'
+    )
+    r.html(titulo)
+
+    tarjeta = (
+        f'<div style="background:{COLOR_WHITE};border-radius:12px;padding:14px;margin-bottom:10px;'
+        f'border:0.5px solid {COLOR_BLUE_BORDER};">'
+        f'<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;">'
+        f'<div>'
+        f'<p style="font-size:12px;color:{COLOR_TEXT_SECONDARY};margin:0;">Multiplicador de tu ruta</p>'
+        f'<p style="font-size:11px;color:{COLOR_TEXT_SECONDARY};margin:2px 0 0;">Aplica a todo el mes</p>'
+        f'</div>'
+        f'<div style="background:{bg};border-radius:10px;padding:8px 16px;">'
+        f'<span style="font-size:22px;font-weight:600;color:{color};">{mult:.0f}%</span>'
+        f'</div></div>'
+        f'<div style="display:flex;gap:8px;border-top:0.5px solid {COLOR_BLUE_BORDER};padding-top:10px;">'
+        f'<div style="flex:1;text-align:center;">'
+        f'<p style="font-size:16px;font-weight:500;color:{COLOR_NAVY};margin:0;">{obj}</p>'
+        f'<p style="font-size:11px;color:{COLOR_TEXT_SECONDARY};margin:2px 0 0;">Objetivo</p>'
+        f'</div>'
+        f'<div style="flex:1;text-align:center;">'
+        f'<p style="font-size:16px;font-weight:500;color:{color};margin:0;">{no_cont}</p>'
+        f'<p style="font-size:11px;color:{COLOR_TEXT_SECONDARY};margin:2px 0 0;">No contestadas</p>'
+        f'</div>'
         f'</div></div>'
     )
     r.html(tarjeta)
