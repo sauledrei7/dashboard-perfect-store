@@ -28,7 +28,7 @@ from data import listar_periodos, get_periodo_default, get_tiendas_de_ruta, adap
 # CONFIG STREAMLIT
 # ============================================================
 st.set_page_config(
-    page_title="Perfect Store",
+    page_title="ATLAS",
     page_icon="🛒",
     layout="centered",
     initial_sidebar_state="collapsed",
@@ -43,8 +43,8 @@ def pantalla_login():
     r.html(f"""
     <div style="text-align:center;padding:40px 0 30px;">
         <div style="font-size:48px;margin-bottom:8px;">🛒</div>
-        <h1 style="margin:0;color:{COLOR_NAVY};font-size:28px;font-weight:500;">Perfect Store</h1>
-        <p style="color:{COLOR_TEXT_SECONDARY};font-size:14px;margin:8px 0 0;">Inicia sesión para ver tu bono</p>
+        <h1 style="margin:0;color:{COLOR_NAVY};font-size:28px;font-weight:500;">ATLAS</h1>
+        <p style="color:{COLOR_TEXT_SECONDARY};font-size:14px;margin:8px 0 0;">Inicia sesión para ver tu bono y tus PS</p>
     </div>
     """)
 
