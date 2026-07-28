@@ -387,3 +387,112 @@ def get_oos_tienda_semana(curt: str, periodo_id: str) -> pd.DataFrame:
     except Exception as e:
         print(f"[OOS_TIENDA_SEMANA ERROR] {e}")
         return pd.DataFrame()
+
+
+# ============================================================
+# INCIDENCIAS  (v10)
+# ============================================================
+import io
+import uuid as _uuid
+from datetime import datetime as _dt
+
+
+def _comprimir_foto(file_bytes: bytes, max_lado: int = 1280, calidad: int = 72) -> bytes:
+    """Comprime y redimensiona una foto para subirla ligera (celular con datos móviles).
+    Devuelve JPEG. Si Pillow no está o falla, devuelve los bytes originales."""
+    try:
+        from PIL import Image, ImageOps
+        img = Image.open(io.BytesIO(file_bytes))
+        img = ImageOps.exif_transpose(img)          # respeta orientación del celular
+        if img.mode in ('RGBA', 'P'):
+            img = img.convert('RGB')
+        img.thumbnail((max_lado, max_lado))          # mantiene proporción
+        out = io.BytesIO()
+        img.save(out, format='JPEG', quality=calidad, optimize=True)
+        return out.getvalue()
+    except Exception as e:
+        print(f"[COMPRIMIR_FOTO WARN] {e}")
+        return file_bytes
+
+
+def subir_foto_incidencia(file_bytes: bytes, ruta: str, curt: str) -> str:
+    """Comprime y sube una foto al bucket PÚBLICO 'incidencias'.
+    Devuelve la URL pública permanente (clicable en el CSV)."""
+    sb = _get_client()
+    comprimida = _comprimir_foto(file_bytes)
+    stamp = _dt.now().strftime('%Y%m%d_%H%M%S')
+    nombre = f"{ruta}/{curt}_{stamp}_{_uuid.uuid4().hex[:8]}.jpg"
+    sb.storage.from_('incidencias').upload(
+        nombre, comprimida, {'content-type': 'image/jpeg', 'upsert': 'false'}
+    )
+    # URL pública permanente
+    return sb.storage.from_('incidencias').get_public_url(nombre)
+
+
+def guardar_incidencia(curt: str, ruta: str, periodo_id: str, tipo: str,
+                       semana: int, comentario: str, fotos_paths: list,
+                       reportada_por: str, tienda: str = None,
+                       cadena: str = None, canal: str = None) -> bool:
+    """Inserta una incidencia. fotos_paths: lista de 1 a 3 rutas de Storage."""
+    sb = _get_client()
+    registro = {
+        'curt': str(curt), 'ruta': ruta, 'periodo_id': periodo_id,
+        'tienda': tienda, 'cadena': cadena, 'canal': canal,
+        'tipo': tipo, 'semana': int(semana) if semana is not None else None,
+        'comentario': comentario, 'fotos': fotos_paths,
+        'reportada_por': reportada_por,
+    }
+    sb.table('incidencias').insert(registro).execute()
+    return True
+
+
+@st.cache_data(ttl=60, show_spinner=False)
+def get_incidencias_de_tienda(curt: str, periodo_id: str) -> pd.DataFrame:
+    """Incidencias ya reportadas en una tienda (para mostrarlas en el detalle)."""
+    sb = _get_client()
+    r = sb.table('incidencias').select('*').eq('curt', str(curt)).eq('periodo_id', periodo_id).order('created_at', desc=True).execute()
+    return pd.DataFrame(r.data) if r.data else pd.DataFrame()
+
+
+def get_incidencias_periodo(periodo_id: str, area_manager: str = None,
+                            supervisor: str = None, ruta: str = None) -> pd.DataFrame:
+    """Todas las incidencias del periodo, con filtro opcional por ámbito.
+    Se usa para el export a Excel."""
+    sb = _get_client()
+    q = sb.table('incidencias').select('*').eq('periodo_id', periodo_id)
+    if ruta:
+        q = q.eq('ruta', ruta)
+    r = q.order('created_at', desc=True).execute()
+    df = pd.DataFrame(r.data) if r.data else pd.DataFrame()
+    if len(df) == 0:
+        return df
+    # Filtros por supervisor/AM: mapear vía kpis_promotor (ruta -> supervisor/am)
+    if (supervisor or area_manager):
+        kp = get_promotores_de_supervisor(supervisor, periodo_id) if supervisor \
+             else get_promotores_de_am(area_manager, periodo_id)
+        rutas_validas = set(kp['ruta'].tolist()) if len(kp) > 0 else set()
+        df = df[df['ruta'].isin(rutas_validas)]
+    return df
+
+
+def firmar_url_foto(path_o_url: str, expira_seg: int = 3600) -> str:
+    """Bucket público: la foto ya es una URL directa; se devuelve tal cual.
+    (Se mantiene la firma de la función por compatibilidad con la bandeja.)"""
+    if not path_o_url:
+        return ''
+    if str(path_o_url).startswith('http'):
+        return path_o_url
+    # fallback: si por alguna razón llega un path, construir URL pública
+    try:
+        sb = _get_client()
+        return sb.storage.from_('incidencias').get_public_url(path_o_url)
+    except Exception as e:
+        print(f"[URL_FOTO WARN] {e}")
+        return ''
+
+
+def get_incidencias_ambito(periodo_id: str, area_manager: str = None,
+                           supervisor: str = None) -> pd.DataFrame:
+    """Incidencias del periodo filtradas por ámbito (para la bandeja visual).
+    AM ve las de todos sus promotores; supervisor las de los suyos."""
+    return get_incidencias_periodo(periodo_id, area_manager=area_manager, supervisor=supervisor)
