@@ -21,6 +21,7 @@ from auth import (
 )
 from components import promotor_resumen, promotor_tiendas, tienda_detalle
 from components import supervisor_resumen, supervisor_promotores
+from components import am_resumen, am_supervisores
 from data import listar_periodos, get_periodo_default, get_tiendas_de_ruta, adaptar_tiendas, get_resumen_promotor, adaptar_promotor
 
 
@@ -53,7 +54,8 @@ def pantalla_login():
         <p style="font-size:13px;color:{COLOR_NAVY};margin:0 0 4px;font-weight:500;">¿Cómo iniciar sesión?</p>
         <p style="font-size:12px;color:{COLOR_TEXT_SECONDARY};margin:0;line-height:1.5;">
             Si eres promotor, usa tu código (ej. <code>PROMOTOR_43</code>).<br>
-            Si eres supervisor, usa tu usuario (ej. <code>supervisor20</code>).
+            Si eres supervisor, usa tu usuario (ej. <code>supervisor20</code>).<br>
+            Si eres Area Manager, usa tu clave de área (ej. <code>gr_an6</code>).
         </p>
     </div>
     """)
@@ -84,6 +86,8 @@ def pantalla_login():
             # Pantalla inicial según tipo
             if resultado['tipo'] == 'promotor':
                 st.session_state.pantalla = 'resumen_promotor'
+            elif resultado['tipo'] == 'am':
+                st.session_state.pantalla = 'resumen_am'
             else:
                 st.session_state.pantalla = 'resumen_supervisor'
             st.rerun()
@@ -160,7 +164,7 @@ def main():
         st.session_state['_pantalla_anterior'] = pantalla
 
     # Mostrar selector de periodo en pantallas principales
-    if pantalla in ('resumen_promotor', 'resumen_supervisor'):
+    if pantalla in ('resumen_promotor', 'resumen_supervisor', 'resumen_am'):
         selector_periodo()
 
     # FLUJO PROMOTOR
@@ -189,10 +193,43 @@ def main():
         else:
             supervisor_resumen.render(usuario, periodo_id)
 
+    # FLUJO AREA MANAGER (v9)
+    elif usuario['tipo'] == 'am':
+        if pantalla == 'resumen_am':
+            am_resumen.render(usuario, periodo_id)
+        elif pantalla == 'lista_supervisores_am':
+            am_supervisores.render(usuario, periodo_id)
+        elif pantalla == 'promotores_de_supervisor_am':
+            _render_promotores_para_am(usuario, periodo_id)
+        elif pantalla == 'tiendas_de_promotor':
+            _render_tiendas_promotor_para_supervisor(usuario, periodo_id)
+        elif pantalla == 'detalle_tienda':
+            st.session_state.volver_a = 'tiendas_de_promotor'
+            tienda_detalle.render(periodo_id)
+        else:
+            am_resumen.render(usuario, periodo_id)
+
     else:
         st.error("Tipo de usuario no reconocido.")
         cerrar_sesion()
         st.rerun()
+
+
+def _render_promotores_para_am(usuario, periodo_id):
+    """v9: El AM ve la lista de promotores del supervisor seleccionado.
+    Reutiliza la misma lista del flujo de supervisor."""
+    sup = st.session_state.get('supervisor_seleccionado')
+    if not sup:
+        st.error("No se seleccionó ningún supervisor")
+        return
+    nombre = st.session_state.get('supervisor_seleccionado_nombre', sup)
+    supervisor_promotores.render_lista(
+        supervisor=sup,
+        periodo_id=periodo_id,
+        volver_a='lista_supervisores_am',
+        titulo=f"Promotores de {nombre}",
+        pantalla_lista='promotores_de_supervisor_am',
+    )
 
 
 def _render_tiendas_promotor_para_supervisor(usuario, periodo_id):
@@ -209,7 +246,7 @@ def _render_tiendas_promotor_para_supervisor(usuario, periodo_id):
     col1, col2 = st.columns([1, 5])
     with col1:
         if st.button("← Volver", key="back_to_lista_promo"):
-            st.session_state.pantalla = 'lista_promotores'
+            st.session_state.pantalla = st.session_state.get('volver_de_tiendas', 'lista_promotores')
             st.rerun()
     with col2:
         r.html(f"""

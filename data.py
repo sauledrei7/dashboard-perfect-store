@@ -292,3 +292,98 @@ def get_periodo_corto(periodo_id: str) -> str:
     if not r.data:
         return periodo_id
     return r.data[0].get('mes', '')
+
+
+# ============================================================
+# OOS POR TIENDA  (v9 — tabla oos_tienda)
+# ============================================================
+@st.cache_data(ttl=300, show_spinner=False)
+def get_oos_tienda(curt: str, periodo_id: str) -> dict:
+    """OOS de UNA tienda en el periodo (obj, contestadas, no contestadas).
+    Devuelve None si la tienda no tiene objetivo OOS o la tabla no existe."""
+    try:
+        sb = _get_client()
+        r = sb.table('oos_tienda').select('*').eq('curt', str(curt)).eq('periodo_id', periodo_id).limit(1).execute()
+        if not r.data:
+            return None
+        return r.data[0]
+    except Exception as e:
+        print(f"[OOS_TIENDA ERROR] {e}")
+        return None
+
+
+# ============================================================
+# DATOS DEL AREA MANAGER  (v9)
+# ============================================================
+@st.cache_data(ttl=300, show_spinner=False)
+def get_supervisores_de_am(area_manager: str, periodo_id: str) -> pd.DataFrame:
+    """Supervisores del AM en un periodo (desde kpis_supervisor)."""
+    sb = _get_client()
+    r = sb.table('kpis_supervisor').select('*').eq('area_manager', area_manager).eq('periodo_id', periodo_id).execute()
+    return pd.DataFrame(r.data) if r.data else pd.DataFrame()
+
+
+@st.cache_data(ttl=300, show_spinner=False)
+def get_promotores_de_am(area_manager: str, periodo_id: str) -> pd.DataFrame:
+    """Todos los promotores del AM en un periodo (desde kpis_promotor)."""
+    sb = _get_client()
+    r = sb.table('kpis_promotor').select('*').eq('area_manager', area_manager).eq('periodo_id', periodo_id).execute()
+    return pd.DataFrame(r.data) if r.data else pd.DataFrame()
+
+
+def get_resumen_am(area_manager: str, periodo_id: str) -> dict:
+    """KPIs agregados del área, calculados desde los promotores del AM.
+    Misma lógica que el bono: %PS = (PS elegibles + bonus) / capturadas;
+    OOS = 1 - (no_cont / obj) agregado."""
+    df_p = get_promotores_de_am(area_manager, periodo_id)
+    df_s = get_supervisores_de_am(area_manager, periodo_id)
+    if len(df_p) == 0:
+        return None
+
+    capturadas = int(df_p['tiendas_capturadas'].fillna(0).sum())
+    ps_total = int(df_p['ps_elegibles'].fillna(0).sum() + df_p['ps_bonus_mayo_depto'].fillna(0).sum())
+    pct_ps = min(ps_total / capturadas * 100, 100.0) if capturadas > 0 else 0.0
+
+    obj_oos = int(df_p['obj_oos'].fillna(0).sum())
+    no_cont = int(df_p['no_cont_oos'].fillna(0).sum())
+    mult_oos = max(0.0, (1 - no_cont / obj_oos) * 100) if obj_oos > 0 else 100.0
+
+    promotores_cobran = int(((df_p['candado_abierto'] == True) & (df_p['pct_ps_ruta'] >= 1)).sum())
+    sup_abiertos = int((df_s['candado_abierto'] == True).sum()) if len(df_s) > 0 else 0
+
+    # v9.1: % promedio de cobro (bono final) — incluye los que van en 0 por candado
+    bono_prom_promo = float(pd.to_numeric(df_p['bono_final_pct'], errors='coerce').fillna(0).mean())
+    bono_prom_sup = float(pd.to_numeric(df_s['bono_final_pct'], errors='coerce').fillna(0).mean()) if len(df_s) > 0 else 0.0
+
+    return {
+        'AREA_MANAGER': area_manager,
+        'N_SUPERVISORES': len(df_s),
+        'N_PROMOTORES': len(df_p),
+        'TIENDAS_TOTALES': int(df_p['tiendas_totales'].fillna(0).sum()),
+        'TIENDAS_ELEGIBLES': int(df_p['tiendas_elegibles'].fillna(0).sum()),
+        'TIENDAS_CAPTURADAS': capturadas,
+        'PS_TOTAL': ps_total,
+        'PCT_PS': round(pct_ps, 2),
+        'OBJ_OOS': obj_oos,
+        'NO_CONT_OOS': no_cont,
+        'MULT_OOS_PCT': round(mult_oos, 2),
+        'BONO_PROM_SUPERVISORES': round(bono_prom_sup, 2),
+        'BONO_PROM_PROMOTORES': round(bono_prom_promo, 2),
+        'PROMOTORES_COBRAN': promotores_cobran,
+        'PROMOTORES_NO_COBRAN': len(df_p) - promotores_cobran,
+        'SUP_CANDADO_ABIERTO': sup_abiertos,
+        'SUP_CANDADO_CERRADO': len(df_s) - sup_abiertos,
+    }
+
+
+@st.cache_data(ttl=300, show_spinner=False)
+def get_oos_tienda_semana(curt: str, periodo_id: str) -> pd.DataFrame:
+    """v9.2: OOS de UNA tienda desglosado por semana (obj, contestadas, no cont).
+    DataFrame vacío si no hay datos o la tabla no existe."""
+    try:
+        sb = _get_client()
+        r = sb.table('oos_tienda_semana').select('*').eq('curt', str(curt)).eq('periodo_id', periodo_id).order('semana').execute()
+        return pd.DataFrame(r.data) if r.data else pd.DataFrame()
+    except Exception as e:
+        print(f"[OOS_TIENDA_SEMANA ERROR] {e}")
+        return pd.DataFrame()
