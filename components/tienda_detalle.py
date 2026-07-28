@@ -376,9 +376,10 @@ def _render_visitas(detalle, semanas, periodo_id):
     )
     r.html(tarjeta)
 
-    # ===== OOS: primero el de ESTA tienda, luego el multiplicador de la ruta =====
+    # ===== OOS de ESTA tienda (desglose por semana) =====
+    # v9.3: se quitó la tarjeta del multiplicador OOS de la ruta (total del mes);
+    # en el detalle de tienda solo mostramos el OOS de la tienda por semana.
     _render_oos_tienda(detalle, periodo_id)
-    _render_multiplicador_oos(detalle, periodo_id)
 
 
 def _render_oos_tienda(detalle, periodo_id):
