@@ -117,6 +117,10 @@ def render(usuario: dict, periodo_id: str):
     # ===== Atención urgente: supervisores con candado cerrado =====
     _render_alertas_supervisores(am, periodo_id)
 
+    # ===== Incidencias del área (solo visual) =====
+    from components import incidencias_bandeja
+    incidencias_bandeja.render(periodo_id, area_manager=am, key="band_am")
+
     # ===== Drill =====
     st.write("")
     if st.button(f"Ver mis {n_sup} supervisores →", key="ver_sups_btn"):

@@ -148,6 +148,10 @@ def render(periodo_id: str):
         )
         r.html(note)
 
+    # ===== Módulo de incidencias (v10) =====
+    from components import incidencias as _inc
+    _inc.render_seccion(curt, periodo_id, info)
+
 
 def _render_kpi(detalle, semanas, columna, titulo, objetivo, es_pct=True):
     """Tarjeta con valores por semana + promedio."""

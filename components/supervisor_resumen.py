@@ -117,6 +117,10 @@ def render(usuario: dict, periodo_id: str):
     # ===== Ranking equipo =====
     _render_ranking(supervisor, periodo_id)
 
+    # ===== Incidencias del equipo (solo visual) =====
+    from components import incidencias_bandeja
+    incidencias_bandeja.render(periodo_id, supervisor=supervisor, key="band_sup")
+
     # ===== Botón =====
     st.write("")
     if st.button(f"Ver mis {rutas_a_cargo} promotores →", key="ver_promos_btn"):
