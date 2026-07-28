@@ -15,7 +15,7 @@ from styles.theme import (
     COLOR_GREEN, COLOR_GREEN_PALE, COLOR_GREEN_TEXT,
     COLOR_AMBER, COLOR_AMBER_PALE, COLOR_RED_DARK, COLOR_RED_PALE, COLOR_WHITE,
 )
-from data import get_detalle_tienda, get_tienda_info, adaptar_detalle, adaptar_tiendas, get_resumen_promotor, adaptar_promotor
+from data import get_detalle_tienda, get_tienda_info, adaptar_detalle, adaptar_tiendas, get_resumen_promotor, adaptar_promotor, get_oos_tienda, get_oos_tienda_semana
 
 
 def render(periodo_id: str):
@@ -376,13 +376,108 @@ def _render_visitas(detalle, semanas, periodo_id):
     )
     r.html(tarjeta)
 
-    # ===== Multiplicador OOS del promotor (del mes, por ruta) =====
+    # ===== OOS: primero el de ESTA tienda, luego el multiplicador de la ruta =====
+    _render_oos_tienda(detalle, periodo_id)
     _render_multiplicador_oos(detalle, periodo_id)
+
+
+def _render_oos_tienda(detalle, periodo_id):
+    """v9: OOS de ESTA tienda. Muestra desglose por semana (última captura por
+    Store x Product x Semana) + total del periodo. Si no tiene objetivo, no aparece."""
+    if 'Store Number' not in detalle.columns or len(detalle) == 0:
+        return
+    curt = str(detalle.iloc[0]['Store Number'])
+
+    # Total del periodo (tabla oos_tienda)
+    d = get_oos_tienda(curt, periodo_id)
+    if not d:
+        return
+    obj_tot = int(d.get('obj_oos', 0) or 0)
+    cont_tot = int(d.get('contestadas_oos', 0) or 0)
+    no_cont_tot = int(d.get('no_cont_oos', 0) or 0)
+    if obj_tot <= 0:
+        return
+    pct_tot = d.get('pct_contestadas')
+    pct_tot = float(pct_tot) if pct_tot is not None else (cont_tot / obj_tot * 100)
+
+    # Desglose por semana (tabla oos_tienda_semana)
+    dfs = get_oos_tienda_semana(curt, periodo_id)
+
+    def _col(pct):
+        if pct >= 95: return COLOR_GREEN, COLOR_GREEN_PALE, COLOR_GREEN_TEXT
+        if pct >= 85: return COLOR_AMBER, COLOR_AMBER_PALE, COLOR_AMBER
+        return COLOR_RED_DARK, COLOR_RED_PALE, COLOR_RED_DARK
+
+    titulo = (
+        f'<p style="font-size:13px;color:{COLOR_TEXT_SECONDARY};margin:14px 4px 8px;font-weight:500;">'
+        f'OOS de esta tienda</p>'
+    )
+    r.html(titulo)
+
+    # ----- Cuadritos por semana (obj / contestadas) -----
+    cuadros = ""
+    if len(dfs) > 0:
+        semanas_oos = dfs.sort_values('semana')
+        n_sem = len(semanas_oos)
+        for _, row in semanas_oos.iterrows():
+            s = int(row['semana'])
+            obj = int(row.get('obj_oos', 0) or 0)
+            cont = int(row.get('contestadas_oos', 0) or 0)
+            if obj <= 0:
+                cuadros += (
+                    f'<div style="text-align:center;">'
+                    f'<p style="font-size:11px;color:{COLOR_TEXT_SECONDARY};margin:0 0 4px;">S{s}</p>'
+                    f'<div style="background:{COLOR_BLUE_BG};border-radius:8px;padding:6px;">'
+                    f'<p style="font-size:13px;font-weight:500;margin:0;color:{COLOR_TEXT_SECONDARY};">—</p>'
+                    f'</div></div>'
+                )
+                continue
+            pct = cont / obj * 100
+            color, bg, _t = _col(pct)
+            cuadros += (
+                f'<div style="text-align:center;">'
+                f'<p style="font-size:11px;color:{COLOR_TEXT_SECONDARY};margin:0 0 4px;">S{s}</p>'
+                f'<div style="background:{bg};border-radius:8px;padding:6px;">'
+                f'<p style="font-size:14px;font-weight:500;margin:0;color:{color};">{cont}/{obj}</p>'
+                f'<p style="font-size:9px;color:{color};margin:1px 0 0;">{pct:.0f}%</p>'
+                f'</div></div>'
+            )
+
+    color_t, bg_t, _tt = _col(pct_tot)
+    grid = (
+        f'<div style="display:grid;grid-template-columns:repeat({len(dfs)}, 1fr);gap:6px;margin-bottom:12px;">{cuadros}</div>'
+        if len(dfs) > 0 else
+        f'<p style="font-size:11px;color:{COLOR_TEXT_SECONDARY};margin:0 0 10px;">Sin desglose semanal disponible.</p>'
+    )
+
+    tarjeta = (
+        f'<div style="background:{COLOR_WHITE};border-radius:12px;padding:14px;margin-bottom:10px;'
+        f'border:0.5px solid {COLOR_BLUE_BORDER};">'
+        f'{grid}'
+        f'<div style="border-top:0.5px solid {COLOR_BLUE_BORDER};padding-top:10px;'
+        f'display:flex;justify-content:space-between;align-items:center;">'
+        f'<div style="display:flex;gap:16px;">'
+        f'<div style="text-align:center;">'
+        f'<p style="font-size:16px;font-weight:500;color:{COLOR_NAVY};margin:0;">{obj_tot}</p>'
+        f'<p style="font-size:11px;color:{COLOR_TEXT_SECONDARY};margin:2px 0 0;">Objetivo</p></div>'
+        f'<div style="text-align:center;">'
+        f'<p style="font-size:16px;font-weight:500;color:{COLOR_GREEN};margin:0;">{cont_tot}</p>'
+        f'<p style="font-size:11px;color:{COLOR_TEXT_SECONDARY};margin:2px 0 0;">Contestadas</p></div>'
+        f'<div style="text-align:center;">'
+        f'<p style="font-size:16px;font-weight:500;color:{color_t if no_cont_tot > 0 else COLOR_NAVY};margin:0;">{no_cont_tot}</p>'
+        f'<p style="font-size:11px;color:{COLOR_TEXT_SECONDARY};margin:2px 0 0;">No contest.</p></div>'
+        f'</div>'
+        f'<div style="background:{bg_t};border-radius:10px;padding:6px 14px;">'
+        f'<span style="font-size:20px;font-weight:600;color:{color_t};">{pct_tot:.0f}%</span>'
+        f'</div>'
+        f'</div></div>'
+    )
+    r.html(tarjeta)
 
 
 def _render_multiplicador_oos(detalle, periodo_id):
     """Muestra el multiplicador OOS de la ruta del promotor (es del mes completo,
-    no por tienda ni por semana — así está definido en la lógica del bono)."""
+    aplica al bono — el detalle por tienda está en la tarjeta de arriba)."""
     if 'Ruta' not in detalle.columns or len(detalle) == 0:
         return
     ruta = detalle.iloc[0]['Ruta']
@@ -417,7 +512,7 @@ def _render_multiplicador_oos(detalle, periodo_id):
         f'<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;">'
         f'<div>'
         f'<p style="font-size:12px;color:{COLOR_TEXT_SECONDARY};margin:0;">Multiplicador de tu ruta</p>'
-        f'<p style="font-size:11px;color:{COLOR_TEXT_SECONDARY};margin:2px 0 0;">Aplica a todo el mes</p>'
+        f'<p style="font-size:11px;color:{COLOR_TEXT_SECONDARY};margin:2px 0 0;">Suma TODAS tus tiendas · aplica al bono del mes</p>'
         f'</div>'
         f'<div style="background:{bg};border-radius:10px;padding:8px 16px;">'
         f'<span style="font-size:22px;font-weight:600;color:{color};">{mult:.0f}%</span>'

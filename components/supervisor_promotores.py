@@ -17,11 +17,28 @@ from data import get_promotores_de_supervisor, adaptar_promotor, get_periodo_cor
 
 
 def render(usuario: dict, periodo_id: str):
-    """Lista de promotores del supervisor."""
-    supervisor = usuario['identificador']
+    """Lista de promotores del supervisor (flujo supervisor)."""
+    render_lista(
+        supervisor=usuario['identificador'],
+        periodo_id=periodo_id,
+        volver_a='resumen_supervisor',
+        titulo='Mis promotores',
+        pantalla_lista='lista_promotores',
+    )
+
+
+def render_lista(supervisor: str, periodo_id: str, volver_a: str,
+                 titulo: str = 'Promotores', pantalla_lista: str = 'lista_promotores'):
+    """v9: Lista reutilizable de promotores de UN supervisor.
+    La usan el flujo de supervisor y el flujo de AM (drill supervisor → promotores)."""
     periodo_corto = get_periodo_corto(periodo_id)
     promotores_raw = get_promotores_de_supervisor(supervisor, periodo_id)
     if len(promotores_raw)==0:
+        col1, _ = st.columns([1, 5])
+        with col1:
+            if st.button("← Volver", key="back_lista_promos"):
+                st.session_state.pantalla = volver_a
+                st.rerun()
         st.info('No hay promotores para este periodo')
         return
     import pandas as pd
@@ -30,13 +47,13 @@ def render(usuario: dict, periodo_id: str):
     # Header
     col1, col2 = st.columns([1, 5])
     with col1:
-        if st.button("← Volver", key="back_sup_resumen"):
-            st.session_state.pantalla = 'resumen_supervisor'
+        if st.button("← Volver", key="back_lista_promos"):
+            st.session_state.pantalla = volver_a
             st.rerun()
     with col2:
         r.html(f"""
         <div>
-            <p style="font-size:17px;font-weight:500;margin:0;color:{COLOR_NAVY};">Mis promotores</p>
+            <p style="font-size:17px;font-weight:500;margin:0;color:{COLOR_NAVY};">{titulo}</p>
             <p style="font-size:12px;color:{COLOR_TEXT_SECONDARY};margin:2px 0 0;">{len(promotores)} promotores · {periodo_corto}</p>
         </div>
         """)
@@ -47,10 +64,10 @@ def render(usuario: dict, periodo_id: str):
     promotores = promotores.sort_values('BONO_FINAL_PCT', ascending=False)
 
     for _, p in promotores.iterrows():
-        _render_tarjeta_promotor(p)
+        _render_tarjeta_promotor(p, pantalla_lista)
 
 
-def _render_tarjeta_promotor(p):
+def _render_tarjeta_promotor(p, pantalla_lista: str = 'lista_promotores'):
     """Tarjeta de un promotor con 4 mini-indicadores."""
     ruta = p['RUTA']
     candado = bool(p['CANDADO_ABIERTO'])
@@ -135,5 +152,6 @@ def _render_tarjeta_promotor(p):
     if st.button(f"Ver tiendas de {ruta}", key=f"sup_promo_{ruta}", help="Ver tiendas del promotor"):
         st.session_state.ruta_seleccionada = ruta
         st.session_state.pantalla = 'tiendas_de_promotor'
-        st.session_state.volver_a = 'lista_promotores'
+        st.session_state.volver_a = pantalla_lista
+        st.session_state.volver_de_tiendas = pantalla_lista
         st.rerun()
