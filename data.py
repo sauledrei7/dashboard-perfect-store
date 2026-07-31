@@ -432,17 +432,35 @@ def subir_foto_incidencia(file_bytes: bytes, ruta: str, curt: str) -> str:
 def guardar_incidencia(curt: str, ruta: str, periodo_id: str, tipo: str,
                        semana: int, comentario: str, fotos_paths: list,
                        reportada_por: str, tienda: str = None,
-                       cadena: str = None, canal: str = None) -> bool:
-    """Inserta una incidencia. fotos_paths: lista de 1 a 3 rutas de Storage."""
+                       cadena: str = None, canal: str = None,
+                       link_trax: str = None) -> bool:
+    """Inserta una incidencia. fotos_paths: lista de 1 a 3 rutas de Storage.
+    La incidencia nace en estado PENDIENTE (default de la tabla)."""
     sb = _get_client()
     registro = {
         'curt': str(curt), 'ruta': ruta, 'periodo_id': periodo_id,
         'tienda': tienda, 'cadena': cadena, 'canal': canal,
         'tipo': tipo, 'semana': int(semana) if semana is not None else None,
         'comentario': comentario, 'fotos': fotos_paths,
-        'reportada_por': reportada_por,
+        'reportada_por': reportada_por, 'link_trax': link_trax,
     }
     sb.table('incidencias').insert(registro).execute()
+    return True
+
+
+def resolver_incidencia(incidencia_id: int, autorizar: bool, resuelta_por: str,
+                        motivo_rechazo: str = None) -> bool:
+    """v11: el supervisor autoriza o rechaza una incidencia.
+    autorizar=True → AUTORIZADA; False → NO_AUTORIZADA."""
+    from datetime import datetime as _dt2
+    sb = _get_client()
+    registro = {
+        'estado': 'AUTORIZADA' if autorizar else 'NO_AUTORIZADA',
+        'resuelta_por': resuelta_por,
+        'resuelta_en': _dt2.now().isoformat(),
+        'motivo_rechazo': (motivo_rechazo or None) if not autorizar else None,
+    }
+    sb.table('incidencias').update(registro).eq('id', int(incidencia_id)).execute()
     return True
 
 
