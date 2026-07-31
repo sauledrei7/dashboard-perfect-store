@@ -92,6 +92,9 @@ def _render_formulario(curt, periodo_id, info, ruta, abierto_key):
     comentario = st.text_area("Breve explicación", key=f"inc_com_{curt}",
                               placeholder="Describe brevemente qué pasó...", max_chars=500)
 
+    link_trax = st.text_input("Link visita Trax *", key=f"inc_trax_{curt}",
+                              placeholder="https://...")
+
     st.caption("Sube de 1 a 3 fotos (obligatorio)")
     fotos = st.file_uploader(
         "Fotos", type=['jpg', 'jpeg', 'png'], accept_multiple_files=True,
@@ -120,6 +123,8 @@ def _render_formulario(curt, periodo_id, info, ruta, abierto_key):
             faltan.append("semana")
         if not (comentario or "").strip():
             faltan.append("explicación")
+        if not (link_trax or "").strip():
+            faltan.append("link de Trax")
         if n_fotos < 1:
             faltan.append("al menos 1 foto")
         if faltan:
@@ -140,6 +145,7 @@ def _render_formulario(curt, periodo_id, info, ruta, abierto_key):
                     tienda=info.get('Tienda') if info else None,
                     cadena=info.get('Cadena') if info else None,
                     canal=info.get('CANAL', info.get('Canal')) if info else None,
+                    link_trax=(link_trax or '').strip() or None,
                 )
             except Exception as e:
                 print(f"[GUARDAR_INCIDENCIA ERROR] {e}")
@@ -188,16 +194,43 @@ def _render_lista_incidencias(curt, periodo_id, solo_lectura):
         com = (inc.get('comentario') or '').strip()
         n_fotos = len(inc.get('fotos') or [])
         fecha = str(inc.get('created_at', ''))[:10]
+        estado = inc.get('estado', 'PENDIENTE') or 'PENDIENTE'
+        link_trax = (inc.get('link_trax') or '').strip()
+        motivo_rechazo = (inc.get('motivo_rechazo') or '').strip()
+
+        # Badge de estado
+        if estado == 'AUTORIZADA':
+            est_bg, est_color, est_txt = COLOR_GREEN_PALE, COLOR_GREEN_TEXT, '✓ Autorizada'
+        elif estado == 'NO_AUTORIZADA':
+            est_bg, est_color, est_txt = COLOR_RED_PALE, COLOR_RED_DARK, '✕ No autorizada'
+        else:
+            est_bg, est_color, est_txt = COLOR_AMBER_PALE, COLOR_AMBER, '⏳ Pendiente'
+
+        trax_html = (
+            f'<a href="{link_trax}" target="_blank" style="font-size:11px;color:{COLOR_BLUE_DARK};text-decoration:none;">🔗 Ver visita Trax</a>'
+            if link_trax else ''
+        )
+        rechazo_html = (
+            f'<p style="font-size:11px;color:{COLOR_RED_DARK};margin:4px 0 0;">Motivo: {motivo_rechazo}</p>'
+            if (estado == 'NO_AUTORIZADA' and motivo_rechazo) else ''
+        )
+
         items += (
             f'<div style="background:{COLOR_WHITE};border:0.5px solid {COLOR_BLUE_BORDER};'
             f'border-radius:10px;padding:10px 12px;margin-bottom:6px;">'
             f'<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px;">'
             f'<span style="background:{COLOR_PINK_PALE};color:{color};font-size:11px;font-weight:500;'
             f'padding:2px 8px;border-radius:6px;">{tipo}</span>'
-            f'<span style="font-size:11px;color:{COLOR_TEXT_SECONDARY};">{sem_txt} · {fecha}</span>'
+            f'<span style="background:{est_bg};color:{est_color};font-size:11px;font-weight:500;'
+            f'padding:2px 8px;border-radius:6px;">{est_txt}</span>'
             f'</div>'
+            f'<p style="font-size:11px;color:{COLOR_TEXT_SECONDARY};margin:2px 0 0;">{sem_txt} · {fecha}</p>'
             f'<p style="font-size:12px;color:{COLOR_NAVY};margin:4px 0 0;line-height:1.4;">{com}</p>'
-            f'<p style="font-size:10px;color:{COLOR_TEXT_SECONDARY};margin:4px 0 0;">📷 {n_fotos} foto(s)</p>'
+            f'{rechazo_html}'
+            f'<div style="display:flex;justify-content:space-between;align-items:center;margin-top:6px;">'
+            f'<span style="font-size:10px;color:{COLOR_TEXT_SECONDARY};">📷 {n_fotos} foto(s)</span>'
+            f'{trax_html}'
+            f'</div>'
             f'</div>'
         )
     r.html(f'<div style="margin-bottom:8px;">{items}</div>')
