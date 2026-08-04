@@ -191,12 +191,15 @@ def _render_lista_incidencias(curt, periodo_id, solo_lectura):
         color = tipo_color.get(tipo, COLOR_TEXT_SECONDARY)
         sem = inc.get('semana')
         sem_txt = f"S{int(sem)}" if pd.notna(sem) else "—"
-        com = (inc.get('comentario') or '').strip()
+        _com = inc.get('comentario')
+        com = str(_com).strip() if pd.notna(_com) else ''
         n_fotos = len(inc.get('fotos') or [])
         fecha = str(inc.get('created_at', ''))[:10]
         estado = inc.get('estado', 'PENDIENTE') or 'PENDIENTE'
-        link_trax = (inc.get('link_trax') or '').strip()
-        motivo_rechazo = (inc.get('motivo_rechazo') or '').strip()
+        _lt = inc.get('link_trax')
+        link_trax = str(_lt).strip() if pd.notna(_lt) else ''
+        _mr = inc.get('motivo_rechazo')
+        motivo_rechazo = str(_mr).strip() if pd.notna(_mr) else ''
 
         # Badge de estado
         if estado == 'AUTORIZADA':

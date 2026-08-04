@@ -92,11 +92,13 @@ def _render_tarjeta(inc, key, puede_resolver=False):
     sem_txt = f"S{int(sem)}" if pd.notna(sem) else "—"
     tienda = inc.get('tienda') or f"CURT {inc.get('curt','')}"
     ruta = inc.get('ruta', '')
-    com = (inc.get('comentario') or '').strip()
+    _com = inc.get('comentario')
+    com = str(_com).strip() if pd.notna(_com) else ''
     fecha = str(inc.get('created_at', ''))[:10]
     fotos = inc.get('fotos') or []
     estado = inc.get('estado', 'PENDIENTE') or 'PENDIENTE'
-    link_trax = (inc.get('link_trax') or '').strip()
+    _lt = inc.get('link_trax')
+    link_trax = str(_lt).strip() if pd.notna(_lt) else ''
     inc_id = inc.get('id')
 
     # Badge de estado
@@ -150,7 +152,7 @@ def _render_tarjeta(inc, key, puede_resolver=False):
 
 
 def _render_acciones_resolver(inc_id, key):
-    from data import resolver_incidencia, get_incidencias_ambito
+    from data import resolver_incidencia, get_incidencias_de_tienda
     rechazar_key = f"rechazando_{key}"
 
     if st.session_state.get(rechazar_key):
@@ -167,7 +169,10 @@ def _render_acciones_resolver(inc_id, key):
                     resolver_incidencia(inc_id, autorizar=False,
                                         resuelta_por=usuario.get('username', usuario.get('identificador', '')),
                                         motivo_rechazo=motivo.strip())
-                    get_incidencias_ambito.clear() if hasattr(get_incidencias_ambito, 'clear') else None
+                    try:
+                        get_incidencias_de_tienda.clear()
+                    except Exception:
+                        pass
                     st.session_state[rechazar_key] = False
                     st.rerun()
         with c2:
@@ -181,7 +186,10 @@ def _render_acciones_resolver(inc_id, key):
                 usuario = st.session_state.get('usuario', {})
                 resolver_incidencia(inc_id, autorizar=True,
                                     resuelta_por=usuario.get('username', usuario.get('identificador', '')))
-                get_incidencias_ambito.clear() if hasattr(get_incidencias_ambito, 'clear') else None
+                try:
+                    get_incidencias_de_tienda.clear()
+                except Exception:
+                    pass
                 st.rerun()
         with c2:
             if st.button("✕ Rechazar", key=f"rech_{key}"):
