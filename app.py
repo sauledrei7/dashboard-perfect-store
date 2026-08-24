@@ -20,7 +20,7 @@ from auth import (
     get_periodo_actual, set_periodo_actual,
 )
 from components import promotor_resumen, promotor_tiendas, tienda_detalle
-from components import supervisor_resumen, supervisor_promotores
+from components import supervisor_resumen, supervisor_promotores, supervisor_promotor_resumen
 from components import am_resumen, am_supervisores
 from data import listar_periodos, get_periodo_default, get_tiendas_de_ruta, adaptar_tiendas, get_resumen_promotor, adaptar_promotor
 
@@ -185,6 +185,8 @@ def main():
             supervisor_resumen.render(usuario, periodo_id)
         elif pantalla == 'lista_promotores':
             supervisor_promotores.render(usuario, periodo_id)
+        elif pantalla == 'resumen_de_promotor':
+            supervisor_promotor_resumen.render(periodo_id, volver_a='lista_promotores')
         elif pantalla == 'tiendas_de_promotor':
             _render_tiendas_promotor_para_supervisor(usuario, periodo_id)
         elif pantalla == 'detalle_tienda':
@@ -201,6 +203,8 @@ def main():
             am_supervisores.render(usuario, periodo_id)
         elif pantalla == 'promotores_de_supervisor_am':
             _render_promotores_para_am(usuario, periodo_id)
+        elif pantalla == 'resumen_de_promotor':
+            supervisor_promotor_resumen.render(periodo_id, volver_a='promotores_de_supervisor_am')
         elif pantalla == 'tiendas_de_promotor':
             _render_tiendas_promotor_para_supervisor(usuario, periodo_id)
         elif pantalla == 'detalle_tienda':

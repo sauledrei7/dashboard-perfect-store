@@ -433,9 +433,15 @@ def guardar_incidencia(curt: str, ruta: str, periodo_id: str, tipo: str,
                        semana: int, comentario: str, fotos_paths: list,
                        reportada_por: str, tienda: str = None,
                        cadena: str = None, canal: str = None,
-                       link_trax: str = None) -> bool:
+                       link_trax: str = None, incidencia: str = None,
+                       categoria: str = None, productos: list = None) -> bool:
     """Inserta una incidencia. fotos_paths: lista de 1 a 3 rutas de Storage.
-    La incidencia nace en estado PENDIENTE (default de la tabla)."""
+    La incidencia nace en estado PENDIENTE (default de la tabla).
+
+    v13: 'tipo' es el KPI afectado; 'incidencia' es el motivo específico.
+    'categoria' y 'productos' solo se llenan cuando el motivo es de producto
+    (no reconocido / reconocido incorrectamente). productos=['TODOS'] significa
+    toda la categoría."""
     sb = _get_client()
     registro = {
         'curt': str(curt), 'ruta': ruta, 'periodo_id': periodo_id,
@@ -443,9 +449,30 @@ def guardar_incidencia(curt: str, ruta: str, periodo_id: str, tipo: str,
         'tipo': tipo, 'semana': int(semana) if semana is not None else None,
         'comentario': comentario, 'fotos': fotos_paths,
         'reportada_por': reportada_por, 'link_trax': link_trax,
+        'incidencia': incidencia, 'categoria': categoria,
+        'productos': productos or None,
     }
     sb.table('incidencias').insert(registro).execute()
     return True
+
+
+# ============================================================
+# CATÁLOGO DE PRODUCTOS  (v13, tabla productos)
+# ============================================================
+@st.cache_data(ttl=1800, show_spinner=False)
+def get_productos(categoria: str = None) -> pd.DataFrame:
+    """SKUs activos del catálogo, opcionalmente filtrados por categoría.
+    DataFrame vacío si la tabla todavía no existe (la app degrada sin romperse)."""
+    try:
+        sb = _get_client()
+        q = sb.table('productos').select('categoria, producto').eq('activo', True)
+        if categoria:
+            q = q.eq('categoria', str(categoria).upper())
+        r = q.order('producto').execute()
+        return pd.DataFrame(r.data) if r.data else pd.DataFrame()
+    except Exception as e:
+        print(f"[PRODUCTOS ERROR] {e}")
+        return pd.DataFrame()
 
 
 def resolver_incidencia(incidencia_id: int, autorizar: bool, resuelta_por: str,
@@ -514,3 +541,71 @@ def get_incidencias_ambito(periodo_id: str, area_manager: str = None,
     """Incidencias del periodo filtradas por ámbito (para la bandeja visual).
     AM ve las de todos sus promotores; supervisor las de los suyos."""
     return get_incidencias_periodo(periodo_id, area_manager=area_manager, supervisor=supervisor)
+
+
+@st.cache_data(ttl=60, show_spinner=False)
+def get_conteo_incidencias_ruta(ruta: str, periodo_id: str) -> dict:
+    """v12: Cuántas incidencias levantó ESTE promotor en la app, por estado y por tipo.
+    Solo conteos (la autorización sigue viviendo en la bandeja del supervisor)."""
+    vacio = {'TOTAL': 0, 'PENDIENTES': 0, 'AUTORIZADAS': 0, 'NO_AUTORIZADAS': 0, 'POR_TIPO': {}}
+    try:
+        sb = _get_client()
+        r = sb.table('incidencias').select('estado, tipo').eq('ruta', ruta).eq('periodo_id', periodo_id).execute()
+        if not r.data:
+            return vacio
+        df = pd.DataFrame(r.data)
+        estados = df['estado'].fillna('PENDIENTE') if 'estado' in df.columns else pd.Series(dtype=str)
+        return {
+            'TOTAL': int(len(df)),
+            'PENDIENTES': int((estados == 'PENDIENTE').sum()),
+            'AUTORIZADAS': int((estados == 'AUTORIZADA').sum()),
+            'NO_AUTORIZADAS': int((estados == 'NO_AUTORIZADA').sum()),
+            'POR_TIPO': df['tipo'].value_counts().to_dict() if 'tipo' in df.columns else {},
+        }
+    except Exception as e:
+        print(f"[CONTEO_INCIDENCIAS ERROR] {e}")
+        return vacio
+
+
+# ============================================================
+# OOS — RESPUESTAS POR MOTIVO  (v12, tabla oos_respuestas)
+# ============================================================
+@st.cache_data(ttl=300, show_spinner=False)
+def get_oos_respuestas_ruta(ruta: str, periodo_id: str) -> pd.DataFrame:
+    """v12: Cuántas veces contestó cada motivo de OOS esta ruta en el periodo.
+    Una fila por (semana, motivo) con el conteo. El motivo 'SIN CONTESTAR' agrupa
+    las que el promotor dejó sin responder (las que castigan el multiplicador).
+
+    Devuelve DataFrame vacío si la tabla todavía no existe en Supabase, para que
+    la pantalla siga funcionando sin el bloque (mismo patrón que get_oos_tienda)."""
+    try:
+        sb = _get_client()
+        r = (sb.table('oos_respuestas').select('*')
+             .eq('ruta', ruta).eq('periodo_id', periodo_id)
+             .order('semana').execute())
+        return pd.DataFrame(r.data) if r.data else pd.DataFrame()
+    except Exception as e:
+        print(f"[OOS_RESPUESTAS ERROR] {e}")
+        return pd.DataFrame()
+
+
+@st.cache_data(ttl=300, show_spinner=False)
+def get_oos_ruta_por_semana(ruta: str, periodo_id: str) -> pd.DataFrame:
+    """v12: OOS de TODA la ruta agregado por semana (suma de sus tiendas).
+    Se arma desde oos_tienda_semana, que ya trae la columna ruta."""
+    try:
+        sb = _get_client()
+        r = (sb.table('oos_tienda_semana')
+             .select('semana, obj_oos, contestadas_oos, no_cont_oos')
+             .eq('ruta', ruta).eq('periodo_id', periodo_id).execute())
+        if not r.data:
+            return pd.DataFrame()
+        df = pd.DataFrame(r.data)
+        agg = df.groupby('semana', as_index=False)[['obj_oos', 'contestadas_oos', 'no_cont_oos']].sum()
+        agg['pct_contestadas'] = agg.apply(
+            lambda x: (x['contestadas_oos'] / x['obj_oos'] * 100) if x['obj_oos'] > 0 else None, axis=1
+        )
+        return agg.sort_values('semana')
+    except Exception as e:
+        print(f"[OOS_RUTA_SEMANA ERROR] {e}")
+        return pd.DataFrame()
