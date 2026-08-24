@@ -60,6 +60,12 @@ CATEGORIA_POR_KPI = {
 CATEGORIAS = ['TEQUILA', 'VODKA', 'WHISKY']
 TODOS = 'TODOS'
 
+# Los selectores arrancan SIN nada elegido. Si se dejan con la primera opción
+# puesta, el promotor puede guardar sin haberla mirado: el caso feo es la
+# semana, que se iría a la primera del periodo y mandaría al supervisor a
+# revisar una semana donde no pasó nada.
+ELIGE = '— Elige una —'
+
 # El catálogo se guarda con su texto oficial, pero hay que mostrarlo limpio:
 # "(habilita explicación obligatoria)" es una nota de diseño del formulario,
 # no algo que el promotor o el supervisor deban leer.
@@ -340,18 +346,23 @@ def _render_formulario(curt, periodo_id, info, ruta, abierto_key, permitidos=Non
             f'KPI afectado: <b style="color:{COLOR_NAVY};">{kpi}</b></p>'
         )
     else:
-        kpi = st.selectbox("¿Qué KPI se afectó?", opciones_kpi, key=f"inc_kpi_{curt}")
+        kpi = st.selectbox("¿Qué KPI se afectó?", opciones_kpi,
+                           index=None, placeholder=ELIGE, key=f"inc_kpi_{curt}")
 
     # ---------- 2. Motivo ----------
-    opciones_inc = incidencias_de(kpi)
-    motivo = st.selectbox(
-        "¿Qué pasó?", opciones_inc,
-        format_func=etiqueta_motivo,
-        key=f"inc_motivo_{curt}_{kpi}",   # la key incluye el KPI para resetear la lista al cambiarlo
-    )
+    # El motivo depende del KPI, así que no se muestra hasta que hay KPI.
+    motivo = None
+    if kpi:
+        motivo = st.selectbox(
+            "¿Qué pasó?", incidencias_de(kpi),
+            index=None, placeholder=ELIGE,
+            format_func=etiqueta_motivo,
+            key=f"inc_motivo_{curt}_{kpi}",   # la key incluye el KPI para resetear la lista al cambiarlo
+        )
 
     # ---------- Guía que cambia según el motivo ----------
-    _render_guia_motivo(motivo)
+    if motivo:
+        _render_guia_motivo(motivo)
 
     # ---------- 3. Categoría y productos (solo motivos de producto) ----------
     categoria = None
@@ -369,23 +380,26 @@ def _render_formulario(curt, periodo_id, info, ruta, abierto_key, permitidos=Non
             # Exhibiciones y OOS no traen categoría implícita
             categoria = st.selectbox(
                 "Categoría del producto", CATEGORIAS,
+                index=None, placeholder=ELIGE,
                 format_func=lambda c: c.title(), key=f"inc_cat_{curt}",
             )
-
-        productos_sel = _selector_productos(curt, categoria)
+        if categoria:
+            productos_sel = _selector_productos(curt, categoria)
 
     # ---------- 4. Semana ----------
     semanas = _semanas_del_periodo(curt, periodo_id)
     if semanas:
         semana = st.selectbox("Semana afectada", semanas,
+                              index=None, placeholder=ELIGE,
                               format_func=lambda s: f"Semana {s}", key=f"inc_sem_{curt}")
     else:
         semana = None
         st.caption("Sin semanas cargadas para este periodo.")
 
     # ---------- 5. Explicación ----------
+    # OJO: motivo puede ser None mientras el promotor no elija nada.
     ayuda_com = ("Obligatorio. Como elegiste \"Otro\", cuéntanos con detalle qué pasó."
-                 if motivo.startswith('Otro') else "Obligatorio. Cuéntanos en corto qué pasó.")
+                 if (motivo or '').startswith('Otro') else "Obligatorio. Cuéntanos en corto qué pasó.")
     comentario = st.text_area("Breve explicación", key=f"inc_com_{curt}",
                               placeholder="Describe brevemente qué pasó...",
                               help=ayuda_com, max_chars=500)
@@ -418,27 +432,31 @@ def _render_formulario(curt, periodo_id, info, ruta, abierto_key, permitidos=Non
     # ---------- Validación ----------
     # Se revalida la regla de Perfect Store al guardar, no solo al pintar:
     # el estado de la sesión pudo cambiar entre que abrió el formulario y envió.
-    if kpi not in opciones_kpi:
+    # (kpi puede venir en None si todavía no eligió: eso lo atrapa 'faltan')
+    if kpi and kpi not in opciones_kpi:
         st.error("Esta tienda es Perfect Store: aquí solo se pueden levantar incidencias de OOS.")
         return
 
     faltan = []
     if not kpi:
-        faltan.append("KPI afectado")
+        faltan.append("el KPI afectado")
     if not motivo:
         faltan.append("qué pasó")
-    if motivo in INCIDENCIAS_DE_PRODUCTO and not productos_sel:
-        faltan.append("al menos 1 producto")
+    if motivo in INCIDENCIAS_DE_PRODUCTO:
+        if not categoria:
+            faltan.append("la categoría")
+        elif not productos_sel:
+            faltan.append("al menos 1 producto")
     if semana is None:
-        faltan.append("semana")
+        faltan.append("la semana")
     if not (comentario or "").strip():
-        faltan.append("explicación")
+        faltan.append("la explicación")
     if not (link_trax or "").strip():
-        faltan.append("link de Trax")
+        faltan.append("el link de Trax")
     if n_fotos < 1:
         faltan.append("al menos 1 foto")
     if faltan:
-        st.error("Falta: " + ", ".join(faltan) + ".")
+        st.error("Te falta " + ", ".join(faltan) + ".")
         return
 
     fotos_usar = fotos[:3]
