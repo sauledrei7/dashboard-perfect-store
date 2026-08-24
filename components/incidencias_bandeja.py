@@ -144,23 +144,29 @@ def _render_tarjeta(inc, key, puede_resolver=False):
             f'<p style="font-size:11px;color:{COLOR_TEXT_SECONDARY};margin:3px 0 0;">🍾 {etiqueta}</p>'
         )
 
-    r.html(f"""
-    <div style="background:{COLOR_WHITE};border:0.5px solid {COLOR_BLUE_BORDER};
-    border-radius:10px;padding:10px 12px;margin-bottom:4px;">
-        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px;">
-            <span style="background:{COLOR_PINK_PALE};color:{color};font-size:11px;font-weight:500;
-            padding:2px 8px;border-radius:6px;">{tipo}</span>
-            <span style="background:{est_bg};color:{est_color};font-size:11px;font-weight:500;
-            padding:2px 8px;border-radius:6px;">{est_txt}</span>
-        </div>
-        <p style="font-size:13px;font-weight:500;color:{COLOR_NAVY};margin:4px 0 0;">{tienda}</p>
-        {motivo_html}
-        {prods_html}
-        <p style="font-size:11px;color:{COLOR_TEXT_SECONDARY};margin:4px 0 0;">{sem_txt} · {fecha} · Reportada por {ruta}</p>
-        <p style="font-size:12px;color:{COLOR_NAVY};margin:6px 0 0;line-height:1.4;">{com}</p>
-        <div style="margin-top:4px;">{trax_html}</div>
-    </div>
-    """)
+    # OJO: esta tarjeta se arma concatenando strings de UNA línea, NO con un
+    # triple-quote multilínea. Si {motivo_html} o {prods_html} van en su propio
+    # renglón y llegan vacíos (incidencias anteriores a v13), dedent deja
+    # renglones en blanco y Markdown convierte lo que sigue en bloque de código.
+    # Es la misma trampa que documenta tienda_detalle.py.
+    r.html(
+        f'<div style="background:{COLOR_WHITE};border:0.5px solid {COLOR_BLUE_BORDER};'
+        f'border-radius:10px;padding:10px 12px;margin-bottom:4px;">'
+        f'<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px;">'
+        f'<span style="background:{COLOR_PINK_PALE};color:{color};font-size:11px;font-weight:500;'
+        f'padding:2px 8px;border-radius:6px;">{tipo}</span>'
+        f'<span style="background:{est_bg};color:{est_color};font-size:11px;font-weight:500;'
+        f'padding:2px 8px;border-radius:6px;">{est_txt}</span>'
+        f'</div>'
+        f'<p style="font-size:13px;font-weight:500;color:{COLOR_NAVY};margin:4px 0 0;">{tienda}</p>'
+        f'{motivo_html}'
+        f'{prods_html}'
+        f'<p style="font-size:11px;color:{COLOR_TEXT_SECONDARY};margin:4px 0 0;">'
+        f'{sem_txt} · {fecha} · Reportada por {ruta}</p>'
+        f'<p style="font-size:12px;color:{COLOR_NAVY};margin:6px 0 0;line-height:1.4;">{com}</p>'
+        f'<div style="margin-top:4px;">{trax_html}</div>'
+        f'</div>'
+    )
 
     # Ver fotos
     if len(fotos) > 0:
