@@ -21,8 +21,13 @@ from data import (
 )
 
 
-def render(usuario: dict, periodo_id: str):
-    """Renderiza la pantalla del resumen del promotor."""
+def render(usuario: dict, periodo_id: str, solo_lectura: bool = False):
+    """Renderiza la pantalla del resumen del promotor.
+
+    solo_lectura=True (v12): la misma vista pero embebida en la pantalla del
+    supervisor/AM. Omite el saludo "Hola", el botón Salir y el botón de tiendas,
+    porque esos los pone la pantalla contenedora. Así el supervisor ve EXACTAMENTE
+    lo que ve su promotor, sin mantener dos versiones del mismo layout."""
     ruta = usuario['identificador']
     periodo_desc = get_periodo_descripcion(periodo_id)
     resumen = adaptar_promotor(get_resumen_promotor(ruta, periodo_id))
@@ -49,26 +54,27 @@ def render(usuario: dict, periodo_id: str):
     visitas_faltantes = int(resumen.get('VISITAS_FALTANTES_95', 0))
 
     # ===== HEADER =====
-    col1, col2 = st.columns([4, 1])
-    with col1:
+    if not solo_lectura:
+        col1, col2 = st.columns([4, 1])
+        with col1:
+            r.html(f"""
+            <div>
+                <p style="font-size:13px;color:{COLOR_TEXT_SECONDARY};margin:0;">Hola {usuario['nombre']}</p>
+                <p style="font-size:18px;font-weight:500;margin:2px 0 0;color:{COLOR_NAVY};">Ruta {ruta}</p>
+            </div>
+            """)
+        with col2:
+            if st.button("Salir", key="logout_btn"):
+                from auth import cerrar_sesion
+                cerrar_sesion()
+                st.rerun()
+
         r.html(f"""
-        <div>
-            <p style="font-size:13px;color:{COLOR_TEXT_SECONDARY};margin:0;">Hola {usuario['nombre']}</p>
-            <p style="font-size:18px;font-weight:500;margin:2px 0 0;color:{COLOR_NAVY};">Ruta {ruta}</p>
+        <div style="background:{COLOR_BLUE_BG};border-radius:10px;padding:10px 12px;margin:14px 0 12px 0;border:0.5px solid {COLOR_BLUE_BORDER};">
+            <span style="font-size:13px;color:{COLOR_TEXT_SECONDARY};">📅 Periodo:</span>
+            <span style="font-size:13px;font-weight:500;color:{COLOR_NAVY};margin-left:6px;">{periodo_desc}</span>
         </div>
         """)
-    with col2:
-        if st.button("Salir", key="logout_btn"):
-            from auth import cerrar_sesion
-            cerrar_sesion()
-            st.rerun()
-
-    r.html(f"""
-    <div style="background:{COLOR_BLUE_BG};border-radius:10px;padding:10px 12px;margin:14px 0 12px 0;border:0.5px solid {COLOR_BLUE_BORDER};">
-        <span style="font-size:13px;color:{COLOR_TEXT_SECONDARY};">📅 Periodo:</span>
-        <span style="font-size:13px;font-weight:500;color:{COLOR_NAVY};margin-left:6px;">{periodo_desc}</span>
-    </div>
-    """)
 
     # ===== HERO DEL BONO =====
     _render_bono_hero(bono_potencial, bono_final, pct_ps, mult_oos, candado_abierto)
@@ -106,10 +112,11 @@ def render(usuario: dict, periodo_id: str):
     _render_visitas(resumen)
 
     # ===== BOTÓN VER TIENDAS =====
-    st.write("")
-    if st.button("Ver mis tiendas →", key="ver_tiendas_btn"):
-        st.session_state.pantalla = 'tiendas_promotor'
-        st.rerun()
+    if not solo_lectura:
+        st.write("")
+        if st.button("Ver mis tiendas →", key="ver_tiendas_btn"):
+            st.session_state.pantalla = 'tiendas_promotor'
+            st.rerun()
 
 
 def _render_bono_hero(bono_potencial, bono_final, pct_ps, mult_oos, candado_abierto):

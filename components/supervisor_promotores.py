@@ -148,10 +148,12 @@ def _render_tarjeta_promotor(p, pantalla_lista: str = 'lista_promotores'):
     </div>
     """)
 
-    # Botón para entrar al detalle del promotor
-    if st.button(f"Ver tiendas de {ruta}", key=f"sup_promo_{ruta}", help="Ver tiendas del promotor"):
+    # Botón para entrar al detalle del promotor.
+    # v12: ahora cae PRIMERO en el resumen del promotor (lo mismo que ve él,
+    # más respuestas de OOS e incidencias); de ahí baja a las tiendas.
+    if st.button(f"Ver resumen de {ruta}", key=f"sup_promo_{ruta}", help="Ver resumen del promotor"):
         st.session_state.ruta_seleccionada = ruta
-        st.session_state.pantalla = 'tiendas_de_promotor'
-        st.session_state.volver_a = pantalla_lista
-        st.session_state.volver_de_tiendas = pantalla_lista
+        st.session_state.pantalla = 'resumen_de_promotor'
+        st.session_state.volver_de_resumen = pantalla_lista
+        st.session_state.volver_de_tiendas = 'resumen_de_promotor'
         st.rerun()

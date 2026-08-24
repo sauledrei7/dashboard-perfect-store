@@ -14,10 +14,13 @@ from styles.theme import (
     COLOR_RED_DARK, COLOR_RED_PALE, COLOR_WHITE,
 )
 from data import get_incidencias_ambito, firmar_url_foto
+from components.incidencias import etiqueta_motivo
 
 TIPO_COLOR = {
     'SOS TEQUILA': COLOR_AMBER, 'SOS WHISKY': COLOR_AMBER, 'SOS VODKA': COLOR_AMBER,
-    'EXH': COLOR_BLUE_BORDER, 'OOS': COLOR_RED_DARK,
+    # v13: 'EXH' se renombró a 'EXHIBICIONES'. Se deja el viejo por las incidencias
+    # levantadas antes de la migración.
+    'EXHIBICIONES': COLOR_BLUE_DARK, 'EXH': COLOR_BLUE_DARK, 'OOS': COLOR_RED_DARK,
 }
 
 
@@ -101,6 +104,15 @@ def _render_tarjeta(inc, key, puede_resolver=False):
     link_trax = str(_lt).strip() if pd.notna(_lt) else ''
     inc_id = inc.get('id')
 
+    # v13: motivo especifico y productos afectados (NULL en las anteriores a v13)
+    _mo = inc.get('incidencia')
+    motivo = str(_mo).strip() if pd.notna(_mo) else ''
+    _ca = inc.get('categoria')
+    categoria = str(_ca).strip() if pd.notna(_ca) else ''
+    prods = inc.get('productos') or []
+    if isinstance(prods, str):
+        prods = [prods]
+
     # Badge de estado
     if estado == 'AUTORIZADA':
         est_bg, est_color, est_txt = COLOR_GREEN_PALE, COLOR_GREEN, '✓ Autorizada'
@@ -114,6 +126,24 @@ def _render_tarjeta(inc, key, puede_resolver=False):
         f'text-decoration:none;">🔗 Ver visita Trax</a>' if link_trax else ''
     )
 
+    # Motivo especifico: es lo primero que necesita leer quien autoriza
+    motivo_html = (
+        f'<p style="font-size:12px;font-weight:500;color:{COLOR_BLUE_DARK};margin:4px 0 0;">'
+        f'{etiqueta_motivo(motivo)}</p>'
+    ) if motivo else ''
+
+    prods_html = ''
+    if len(prods) > 0:
+        if 'TODOS' in prods:
+            etiqueta = 'Todos los de %s' % (categoria.title() if categoria else 'la categoría')
+        elif len(prods) <= 2:
+            etiqueta = ' · '.join(str(p)[:36] for p in prods)
+        else:
+            etiqueta = '%s y %d más' % (str(prods[0])[:30], len(prods) - 1)
+        prods_html = (
+            f'<p style="font-size:11px;color:{COLOR_TEXT_SECONDARY};margin:3px 0 0;">🍾 {etiqueta}</p>'
+        )
+
     r.html(f"""
     <div style="background:{COLOR_WHITE};border:0.5px solid {COLOR_BLUE_BORDER};
     border-radius:10px;padding:10px 12px;margin-bottom:4px;">
@@ -124,7 +154,9 @@ def _render_tarjeta(inc, key, puede_resolver=False):
             padding:2px 8px;border-radius:6px;">{est_txt}</span>
         </div>
         <p style="font-size:13px;font-weight:500;color:{COLOR_NAVY};margin:4px 0 0;">{tienda}</p>
-        <p style="font-size:11px;color:{COLOR_TEXT_SECONDARY};margin:2px 0 0;">{sem_txt} · {fecha} · Reportada por {ruta}</p>
+        {motivo_html}
+        {prods_html}
+        <p style="font-size:11px;color:{COLOR_TEXT_SECONDARY};margin:4px 0 0;">{sem_txt} · {fecha} · Reportada por {ruta}</p>
         <p style="font-size:12px;color:{COLOR_NAVY};margin:6px 0 0;line-height:1.4;">{com}</p>
         <div style="margin-top:4px;">{trax_html}</div>
     </div>
