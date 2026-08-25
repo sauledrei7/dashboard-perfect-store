@@ -150,6 +150,9 @@ MAPEO_PROMOTOR = {
     'TIENDAS_CAPTURADAS': 'tiendas_capturadas',
     'TIENDAS_TOTALES': 'tiendas_totales',
     'TIENDAS_ELEGIBLES': 'tiendas_elegibles',
+    # v15: lo usa la guía "cómo se calcula mi bono" para explicar de dónde
+    # sale el denominador (totales = elegibles + mayo/depto).
+    'TIENDAS_MAYO_DEPTO': 'tiendas_mayo_depto',
     'PS_ELEGIBLES': 'ps_elegibles',
     'PS_BONUS_MAYO_DEPTO': 'ps_bonus_mayo_depto',
     'OBJ_OOS': 'obj_oos',
@@ -460,12 +463,26 @@ def guardar_incidencia(curt: str, ruta: str, periodo_id: str, tipo: str,
 # CATÁLOGO DE PRODUCTOS  (v13, tabla productos)
 # ============================================================
 @st.cache_data(ttl=1800, show_spinner=False)
-def get_productos(categoria: str = None) -> pd.DataFrame:
-    """SKUs activos del catálogo, opcionalmente filtrados por categoría.
-    DataFrame vacío si la tabla todavía no existe (la app degrada sin romperse)."""
+def get_productos(kpi: str = None, categoria: str = None) -> pd.DataFrame:
+    """v14: SKUs activos que aplican al KPI indicado.
+
+    Cada KPI mide un universo distinto, por eso el catálogo trae una bandera
+    por KPI en vez de una sola lista:
+      OOS          -> aplica_oos  (91: todo lo que sale en los archivos OOS)
+      EXHIBICIONES -> aplica_exh  (113: whisky+tequila+vodka+Baileys+Zacapa)
+      SOS *        -> aplica_sos filtrado por la categoría del KPI
+
+    DataFrame vacío si la tabla todavía no existe (la app degrada sin romperse).
+    """
     try:
         sb = _get_client()
-        q = sb.table('productos').select('categoria, producto').eq('activo', True)
+        q = sb.table('productos').select('categoria, producto, marca').eq('activo', True)
+        if kpi == 'OOS':
+            q = q.eq('aplica_oos', True)
+        elif kpi == 'EXHIBICIONES':
+            q = q.eq('aplica_exh', True)
+        elif kpi and str(kpi).startswith('SOS'):
+            q = q.eq('aplica_sos', True)
         if categoria:
             q = q.eq('categoria', str(categoria).upper())
         r = q.order('producto').execute()
