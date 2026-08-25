@@ -41,11 +41,16 @@ INCIDENCIAS_BASE = [
     'Objetivo o Target incorrecto.',
     'Objetivo no visible.',
     'Problema de sincronización.',
+    # v15: la tienda no tenía el producto. No es una falla de TRAX sino una
+    # condición de la tienda, pero afecta igual al KPI y hay que documentarla.
+    'Desabasto.',
     'Otro (habilita explicación obligatoria).',
 ]
 INCIDENCIA_TOUCHPOINT = 'Touchpoint no reflejado.'   # solo Exhibiciones
 
-# Motivos que exigen decir QUÉ producto falló
+# Motivos que exigen decir QUÉ producto falló.
+# Desabasto NO va aquí a propósito: se levanta cuando la tienda no tenía ningún
+# SKU de la categoría, así que pedirle marcar cuáles sería contradictorio.
 INCIDENCIAS_DE_PRODUCTO = (
     'Producto no reconocido por TRAX.',
     'Producto reconocido incorrectamente.',
@@ -196,6 +201,17 @@ GUIA = {
             'En la explicación dinos <b>por cuál producto lo confundió</b>.',
         ],
         'ojo': 'Marca abajo el producto que TÚ pusiste en el anaquel, no por el que lo confundió.',
+    },
+    'Desabasto.': {
+        'titulo': 'La tienda no tenía nada de producto',
+        'items': [
+            'Foto del <b>anaquel vacío</b>, donde se vea que no hay qué exhibir.',
+            'Si la tienda te dio su reporte de inventario, adjúntalo también.',
+            'En la explicación dinos <b>desde cuándo</b> está así y si ya lo reportaste.',
+        ],
+        'ojo': 'Esto es para cuando <b>no tenías ni un SKU</b> de la categoría. '
+               'Si sí había producto y el problema fue otro, elige el motivo que '
+               'corresponda: no es una falla de TRAX, es que no había qué exhibir.',
     },
     'Otro (habilita explicación obligatoria).': {
         'titulo': 'Algo que no está en la lista',

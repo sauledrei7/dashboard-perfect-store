@@ -410,6 +410,54 @@ def _color_categoria(valor, objetivo):
         return COLOR_RED
 
 
+def _que_le_falta(t):
+    """Qué le falta a la tienda para ser PS, contra SUS objetivos reales.
+
+    OJO con las escalas, que no son iguales: adaptar_tiendas() divide los SOS
+    entre 100 (quedan 0-1) pero deja los objetivos como vienen (0-100). El EXH
+    y su objetivo sí están los dos en puntos.
+
+    Antes esto comparaba contra 4 puntos de EXH y 35% de whisky fijos. El
+    objetivo de EXH es 2 en 189 tiendas, así que a esas les decía "va en 2/4"
+    cuando en realidad ya habían cumplido."""
+    faltantes = []
+    for col, col_obj, etiqueta, escala, decimales in (
+            ('Puntos Promedio Exhibición', 'Objetivo Puntos HS', 'EXH', 1, 0),
+            ('Total Whisky', 'Objetivo Whisky', 'Whisky', 100, 0),
+            ('Total tequila', 'Objetivo Tequila', 'Tequila', 100, 0),
+            ('Total vodka', 'Objetivo Vodka', 'Vodka', 100, 0)):
+        val, obj = t.get(col), t.get(col_obj)
+        if val is None or obj is None or pd.isna(val) or pd.isna(obj):
+            continue
+        try:
+            val, obj = float(val) * escala, float(obj)
+        except (TypeError, ValueError):
+            continue
+        if obj <= 0:            # sin objetivo cargado no se puede juzgar
+            continue
+        if val < obj:
+            faltantes.append((etiqueta, val, obj, decimales))
+
+    if not faltantes:
+        return "Cerca de ser PS"
+
+    # La que más lejos esté va primero: no tiene caso señalar una categoría a la
+    # que le faltan 3 centésimas si otra está 20 puntos abajo.
+    faltantes.sort(key=lambda f: f[2] - f[1], reverse=True)
+
+    etq, val, obj, dec = faltantes[0]
+    sufijo = '%' if etq != 'EXH' else ''
+    txt_val, txt_obj = f"{val:.{dec}f}", f"{obj:.{dec}f}"
+
+    if len(faltantes) > 1:
+        return "Faltan " + ", ".join(f[0] for f in faltantes)
+    # Si al redondear los dos números quedan iguales, mostrarlos sería absurdo
+    # ("va en 35% de 35%"). Pasa en 69 comparaciones: diferencias de centésimas.
+    if txt_val == txt_obj:
+        return f"Casi cumple {etq}, le falta muy poco"
+    return f"Falta {etq} (va en {txt_val}{sufijo} de {txt_obj}{sufijo})"
+
+
 def _render_cerca_ps(ruta, periodo_id):
     """Top 3 tiendas que están cerca de ser PS."""
     tiendas_cerca = adaptar_tiendas(get_tiendas_cerca_ps(ruta, periodo_id, top_n=3))
@@ -419,12 +467,7 @@ def _render_cerca_ps(ruta, periodo_id):
     items_html = ""
     for _, t in tiendas_cerca.iterrows():
         nombre = str(t.get('Tienda', 'Tienda'))[:30]
-        falta = "Cerca de ser PS"
-        puntos_exh = t.get('Puntos Promedio Exhibición', 0) or 0
-        if pd.notna(puntos_exh) and puntos_exh < 4:
-            falta = f"Falta EXH (va en {puntos_exh:.0f}/4)"
-        elif pd.notna(t.get('Total Whisky')) and t['Total Whisky'] < 0.35:
-            falta = "Falta Whisky"
+        falta = _que_le_falta(t)
 
         items_html += (
             f'<div style="background:{COLOR_PINK_PALE};border-radius:10px;padding:10px 12px;margin-bottom:6px;display:flex;justify-content:space-between;align-items:center;">'
