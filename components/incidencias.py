@@ -57,7 +57,12 @@ CATEGORIA_POR_KPI = {
     'SOS WHISKY': 'WHISKY',
     'SOS VODKA': 'VODKA',
 }
-CATEGORIAS = ['TEQUILA', 'VODKA', 'WHISKY']
+# v14: el catálogo dejó de ser solo las 3 categorías que se miden en SOS.
+# Entran Baileys (LICOR), Zacapa y Captain Morgan (RON), Tanqueray (GINEBRA),
+# Mezcal Unión (MEZCAL) y los letreros del OOS (MENU).
+# Debe coincidir con el CHECK de 03_productos_v14.sql.
+CATEGORIAS = ['TEQUILA', 'VODKA', 'WHISKY', 'LICOR', 'RON',
+              'GINEBRA', 'MEZCAL', 'MENU', 'POS', 'OTRO']
 TODOS = 'TODOS'
 
 # Los selectores arrancan SIN nada elegido. Si se dejan con la primera opción
@@ -364,27 +369,23 @@ def _render_formulario(curt, periodo_id, info, ruta, abierto_key, permitidos=Non
     if motivo:
         _render_guia_motivo(motivo)
 
-    # ---------- 3. Categoría y productos (solo motivos de producto) ----------
+    # ---------- 3. Productos (solo motivos de producto) ----------
+    # v14: ya NO se pregunta la categoría. Cada KPI trae su propio universo
+    # (OOS 91, Exhibiciones 113, SOS los de su categoría) y el buscador del
+    # multiselect resuelve mejor que obligar a drilear por categoría en celular.
+    # Para SOS la categoría sale del KPI; para OOS y Exhibiciones se deduce
+    # de lo que el promotor marque.
     categoria = None
     productos_sel = None
     if motivo in INCIDENCIAS_DE_PRODUCTO:
-        categoria = CATEGORIA_POR_KPI.get(kpi)
-        if categoria:
-            # El KPI ya dice la categoría: se informa, no se pregunta.
+        cat_del_kpi = CATEGORIA_POR_KPI.get(kpi)
+        if cat_del_kpi:
             r.html(
                 f'<p style="font-size:12px;color:{COLOR_TEXT_SECONDARY};margin:0 0 6px;">'
-                f'Categoría: <b style="color:{COLOR_NAVY};">{categoria.title()}</b> '
+                f'Categoría: <b style="color:{COLOR_NAVY};">{cat_del_kpi.title()}</b> '
                 f'<span style="color:{COLOR_PINK_TEXT};">(por el KPI que elegiste)</span></p>'
             )
-        else:
-            # Exhibiciones y OOS no traen categoría implícita
-            categoria = st.selectbox(
-                "Categoría del producto", CATEGORIAS,
-                index=None, placeholder=ELIGE,
-                format_func=lambda c: c.title(), key=f"inc_cat_{curt}",
-            )
-        if categoria:
-            productos_sel = _selector_productos(curt, categoria)
+        productos_sel, categoria = _selector_productos(curt, kpi, cat_del_kpi)
 
     # ---------- 4. Semana ----------
     semanas = _semanas_del_periodo(curt, periodo_id)
@@ -442,11 +443,10 @@ def _render_formulario(curt, periodo_id, info, ruta, abierto_key, permitidos=Non
         faltan.append("el KPI afectado")
     if not motivo:
         faltan.append("qué pasó")
-    if motivo in INCIDENCIAS_DE_PRODUCTO:
-        if not categoria:
-            faltan.append("la categoría")
-        elif not productos_sel:
-            faltan.append("al menos 1 producto")
+    # La categoría ya no se valida: o la impone el KPI, o se deduce de lo
+    # elegido, y puede quedar en NULL si el promotor marca de varias.
+    if motivo in INCIDENCIAS_DE_PRODUCTO and not productos_sel:
+        faltan.append("al menos 1 producto")
     if semana is None:
         faltan.append("la semana")
     if not (comentario or "").strip():
@@ -486,31 +486,43 @@ def _render_formulario(curt, periodo_id, info, ruta, abierto_key, permitidos=Non
     st.rerun()
 
 
-def _selector_productos(curt, categoria):
-    """Selección MÚLTIPLE de SKUs de la categoría, con opción TODOS.
-    Devuelve ['TODOS'] o la lista de productos elegidos."""
-    df = get_productos(categoria)
+def _selector_productos(curt, kpi, categoria=None):
+    """Selección MÚLTIPLE de SKUs del universo que le toca a este KPI,
+    con opción TODOS. Devuelve (seleccion, categoria_resultante).
+
+    La categoría se deduce de lo marcado cuando el KPI no la impone:
+    si todo lo elegido es de la misma, se guarda esa; si es mezcla, va NULL
+    (los productos ya quedan guardados uno por uno de todos modos)."""
+    df = get_productos(kpi, categoria)
     if len(df) == 0:
         st.warning("No pudimos cargar el catálogo de productos. "
                    "Escribe en la explicación cuál fue el producto afectado.")
-        return None
+        return None, categoria
 
     skus = df['producto'].tolist()
-    opciones = [TODOS] + skus
+    etiqueta_todos = ("▸ TODOS los de %s" % categoria.title()) if categoria else "▸ TODOS los productos"
 
     sel = st.multiselect(
-        f"¿Qué producto(s)? · {len(skus)} de {categoria.title()}",
-        opciones,
-        format_func=lambda p: "▸ TODOS los de la categoría" if p == TODOS else p,
-        key=f"inc_prod_{curt}_{categoria}",
+        f"¿Qué producto(s)? · {len(skus)} disponibles",
+        [TODOS] + skus,
+        format_func=lambda p: etiqueta_todos if p == TODOS else p,
+        key=f"inc_prod_{curt}_{kpi}_{categoria or 'all'}",
+        placeholder="Escribe para buscar…",
         help="Puedes marcar varios. Si falló todo el anaquel, usa TODOS.",
     )
 
     if TODOS in sel:
         if len(sel) > 1:
             st.caption("Marcaste TODOS: se ignoran los productos sueltos.")
-        return [TODOS]
-    return sel or None
+        return [TODOS], categoria
+    if not sel:
+        return None, categoria
+
+    if categoria:
+        return sel, categoria
+    # Sin categoría impuesta: se deduce de lo elegido
+    cats = set(df[df['producto'].isin(sel)]['categoria'].dropna())
+    return sel, (cats.pop() if len(cats) == 1 else None)
 
 
 # ============================================================

@@ -102,6 +102,9 @@ def render(usuario: dict, periodo_id: str, solo_lectura: bool = False):
     # ===== KPIs: %PS y Multiplicador OOS =====
     _render_kpis_ps_oos(resumen)
 
+    # ===== Cómo se calcula el bono, con SUS números =====
+    _render_como_se_calcula(resumen)
+
     # ===== CUMPLIMIENTO POR CATEGORÍA =====
     _render_cumplimiento_categorias(resumen)
 
@@ -180,6 +183,156 @@ def _render_candado(abierto, efectividad):
             <span style="font-size:22px;color:{COLOR_RED_DARK};">✗</span>
         </div>
         """)
+
+
+def _render_como_se_calcula(resumen):
+    """Explica los 4 pasos del bono usando LOS NÚMEROS DEL PROMOTOR.
+
+    La fórmula está verificada contra kpis_promotor: reproduce exactamente el
+    bono guardado en las 278 rutas de agosto y de julio. Si algún día el
+    notebook cambia el cálculo, esta pantalla hay que actualizarla con él.
+
+    OJO: todo se arma concatenando strings de UNA línea. Hay bloques que se
+    omiten según el caso y, si fueran renglones sueltos dentro de un
+    triple-quote, dedent dejaría líneas en blanco y Markdown pintaría el
+    resto como bloque de código.
+    """
+    prog = int(resumen.get('VISITAS_PROGRAMADAS', 0) or 0)
+    norm = int(resumen.get('VISITAS_NORMALES', 0) or 0)
+    inc = int(resumen.get('VISITAS_INCIDENCIA', 0) or 0)
+    real = norm + inc
+    efec = float(resumen.get('EFECTIVIDAD_PCT', 0) or 0)
+    abierto = bool(resumen['CANDADO_ABIERTO'])
+    faltan = int(resumen.get('VISITAS_FALTANTES_95', 0) or 0)
+
+    ps_eleg = int(resumen.get('PS_ELEGIBLES', 0) or 0)
+    ps_bonus = int(resumen.get('PS_BONUS_MAYO_DEPTO', 0) or 0)
+    cap = int(resumen.get('TIENDAS_CAPTURADAS', 0) or 0)
+    tot = int(resumen.get('TIENDAS_TOTALES', 0) or 0)
+    eleg = int(resumen.get('TIENDAS_ELEGIBLES', 0) or 0)
+    mayo = int(resumen.get('TIENDAS_MAYO_DEPTO', 0) or 0)
+    pct_ps = float(resumen.get('PCT_PS_RUTA', 0) or 0)
+    pct_pago = float(resumen.get('PCT_PAGO', 0) or 0)
+
+    obj = int(resumen.get('OBJ_OOS', 0) or 0)
+    noc = int(resumen.get('NO_CONT_OOS', 0) or 0)
+    mult = float(resumen.get('MULT_OOS_PCT', 100) or 0)
+
+    final = float(resumen.get('BONO_FINAL_PCT', 0) or 0)
+    potencial = float(resumen.get('BONO_POTENCIAL_PCT', 0) or 0)
+
+    def paso(num, titulo, cuerpo, resultado, color, fondo):
+        return (
+            f'<div style="display:flex;gap:10px;margin-bottom:10px;">'
+            f'<div style="width:22px;height:22px;border-radius:50%;background:{color};color:#fff;'
+            f'font-size:12px;font-weight:600;display:flex;align-items:center;justify-content:center;'
+            f'flex-shrink:0;margin-top:2px;">{num}</div>'
+            f'<div style="flex:1;min-width:0;">'
+            f'<p style="font-size:12px;font-weight:600;color:{COLOR_NAVY};margin:0 0 3px;">{titulo}</p>'
+            # div y no p: el cuerpo del paso 2 trae renglones propios dentro,
+            # y un <p> anidado en otro <p> lo cierra el navegador antes de tiempo
+            f'<div style="font-size:11px;color:{COLOR_TEXT_SECONDARY};line-height:1.5;">{cuerpo}</div>'
+            f'<div style="background:{fondo};border-radius:8px;padding:6px 10px;margin-top:5px;">'
+            f'<span style="font-size:12px;font-weight:600;color:{color};">{resultado}</span>'
+            f'</div></div></div>'
+        )
+
+    # ---- Paso 1: candado ----
+    if abierto:
+        p1 = paso(1, 'El candado de visitas',
+                  f'Hiciste <b>{real}</b> de <b>{prog}</b> visitas programadas. '
+                  f'Necesitas 95% o más para que tu bono se libere.',
+                  f'✓ {efec:.0f}% · candado abierto',
+                  COLOR_GREEN, COLOR_GREEN_PALE)
+    else:
+        falta_txt = (f' Te faltan <b>{faltan}</b> visitas.' if faltan > 0 else '')
+        p1 = paso(1, 'El candado de visitas',
+                  f'Hiciste <b>{real}</b> de <b>{prog}</b> visitas programadas. '
+                  f'Necesitas 95% o más.{falta_txt}',
+                  f'✕ {efec:.0f}% · candado cerrado, tu bono queda en 0%',
+                  COLOR_RED_DARK, COLOR_RED_PALE)
+
+    # ---- Paso 2: %PS ----
+    # Se explica el universo completo, porque el denominador no son todas las
+    # tiendas: totales = elegibles + mayoreo/depto, y de las elegibles solo
+    # cuentan las que visitaste. (Relación verificada en las 556 rutas.)
+    def _renglon(texto):
+        return (f'<p style="font-size:11px;color:{COLOR_TEXT_SECONDARY};margin:3px 0 0;'
+                f'line-height:1.5;">{texto}</p>')
+
+    if cap > 0:
+        cuerpo2 = f'Tienes <b>{tot}</b> tiendas en tu ruta:'
+        cuerpo2 += _renglon(f'· <b>{eleg}</b> cuentan para tu Perfect Store.')
+        if mayo > 0:
+            cuerpo2 += _renglon(
+                f'· <b>{mayo}</b> son de mayoreo o departamental. Si logran PS te '
+                f'suman, pero no entran al total: son bonus.')
+        cuerpo2 += _renglon(
+            f'De esas <b>{eleg}</b>, visitaste <b>{cap}</b>. Ese es tu objetivo, '
+            f'y sobre él se calcula tu PS.')
+        if ps_bonus > 0:
+            cuerpo2 += _renglon(
+                f'Lograste <b>{ps_eleg}</b> PS, más <b>{ps_bonus}</b> de bonus.')
+            res2 = f'({ps_eleg} + {ps_bonus} bonus) ÷ {cap} = {pct_ps:.0f}% de PS'
+        else:
+            cuerpo2 += _renglon(f'De esas <b>{cap}</b>, lograste <b>{ps_eleg}</b>.')
+            res2 = f'{ps_eleg} ÷ {cap} = {pct_ps:.0f}% de PS'
+    else:
+        cuerpo2 = (f'Tienes <b>{tot}</b> tiendas en tu ruta, pero todavía no has '
+                   f'visitado ninguna de las que cuentan para el PS.')
+        res2 = '0% de PS'
+    p2 = paso(2, 'Tu % Perfect Store', cuerpo2, res2, COLOR_BLUE_DARK, COLOR_BLUE_PALE)
+
+    # ---- Paso 3: %pago ----
+    if pct_ps >= 80:
+        cuerpo3 = 'Con 80% de PS o más, se te paga el 100%. Ya llegaste.'
+        res3 = f'{pct_ps:.0f}% de PS → se paga 100%'
+    else:
+        cuerpo3 = ('Con 80% de PS o más se paga el 100%. Abajo de 80% '
+                   'se paga justo el porcentaje que llevas.')
+        res3 = f'{pct_ps:.0f}% de PS → se paga {pct_pago:.0f}%'
+    p3 = paso(3, 'Cuánto de eso se paga', cuerpo3, res3, COLOR_BLUE_DARK, COLOR_BLUE_PALE)
+
+    # ---- Paso 4: OOS ----
+    if obj > 0:
+        cuerpo4 = (f'De <b>{obj}</b> encuestas de OOS dejaste <b>{noc}</b> sin contestar. '
+                   f'Cada una sin contestar te baja el multiplicador.')
+        res4 = f'{pct_pago:.0f}% × {mult:.0f}% = {potencial:.0f}%'
+    else:
+        cuerpo4 = 'No tuviste objetivo de OOS este periodo, así que no te penaliza.'
+        res4 = f'{pct_pago:.0f}% × 100% = {potencial:.0f}%'
+    col4 = COLOR_GREEN if mult >= 95 else (COLOR_AMBER if mult >= 85 else COLOR_RED_DARK)
+    bg4 = COLOR_GREEN_PALE if mult >= 95 else (COLOR_BLUE_PALE if mult >= 85 else COLOR_RED_PALE)
+    p4 = paso(4, 'El multiplicador de OOS', cuerpo4, res4, col4, bg4)
+
+    # ---- Cierre ----
+    if abierto:
+        cierre = (
+            f'<div style="background:linear-gradient(135deg,{COLOR_PINK_PALE},{COLOR_BLUE_PALE});'
+            f'border-radius:10px;padding:12px;text-align:center;margin-top:4px;">'
+            f'<p style="font-size:11px;color:{COLOR_TEXT_SECONDARY};margin:0;">Tu bono queda en</p>'
+            f'<p style="font-size:26px;font-weight:600;color:{COLOR_NAVY};margin:2px 0 0;">{final:.0f}%</p>'
+            f'</div>'
+        )
+    else:
+        cierre = (
+            f'<div style="background:{COLOR_RED_PALE};border:0.5px solid {COLOR_RED_BORDER};'
+            f'border-radius:10px;padding:12px;text-align:center;margin-top:4px;">'
+            f'<p style="font-size:11px;color:{COLOR_RED_DARK};margin:0;">'
+            f'Tu bono sería de <b>{potencial:.0f}%</b>, pero el candado lo deja en</p>'
+            f'<p style="font-size:26px;font-weight:600;color:{COLOR_RED_DARK};margin:2px 0 0;">0%</p>'
+            f'<p style="font-size:10px;color:{COLOR_RED_DARK};margin:4px 0 0;">'
+            f'Cierra tus visitas al 95% y se libera.</p></div>'
+        )
+
+    with st.expander("📐 ¿Cómo se calcula mi bono?", expanded=False):
+        r.html(
+            f'<div style="padding:2px 0;">'
+            f'<p style="font-size:11px;color:{COLOR_TEXT_SECONDARY};margin:0 0 12px;line-height:1.5;">'
+            f'Son 4 pasos, y aquí van con <b>tus números</b> de este periodo.</p>'
+            f'{p1}{p2}{p3}{p4}{cierre}'
+            f'</div>'
+        )
 
 
 def _render_kpis_ps_oos(resumen):
