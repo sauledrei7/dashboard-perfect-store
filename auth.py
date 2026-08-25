@@ -28,6 +28,26 @@ def normalizar_usuario(input_usuario: str) -> str:
     return u
 
 
+def _registrar_acceso(username: str, resultado: str,
+                      tipo: str = None, identificador: str = None):
+    """v16: deja constancia del intento de login en la tabla accesos.
+
+    Va envuelto en try/except a propósito y NO relanza: si la bitácora falla
+    —porque la tabla no existe todavía, o Supabase va lento— el promotor tiene
+    que poder entrar igual. Medir nunca debe estorbarle a la operación.
+    """
+    try:
+        sb = _get_client()
+        sb.table('accesos').insert({
+            'username': username,
+            'tipo': tipo,
+            'identificador': identificador,
+            'resultado': resultado,
+        }).execute()
+    except Exception as e:
+        print(f"[ACCESOS WARN] no se pudo registrar el acceso: {e}")
+
+
 def autenticar(input_usuario: str, password: str) -> dict:
     """
     Valida contraseña EN PYTHON con bcrypt.
@@ -46,11 +66,14 @@ def autenticar(input_usuario: str, password: str) -> dict:
         ).eq('username', usuario_normalizado).limit(1).execute()
 
         if not r.data:
+            _registrar_acceso(usuario_normalizado, 'NO_EXISTE')
             return None  # usuario no existe
 
         row = r.data[0]
 
         if not row.get('activo', True):
+            _registrar_acceso(usuario_normalizado, 'INACTIVO',
+                              row.get('tipo'), row.get('identificador'))
             return None  # usuario desactivado
 
         # Verificar contraseña con bcrypt EN PYTHON
@@ -61,9 +84,13 @@ def autenticar(input_usuario: str, password: str) -> dict:
         try:
             valido = bcrypt.checkpw(password_bytes, hash_bytes)
         except Exception:
+            _registrar_acceso(usuario_normalizado, 'PASSWORD',
+                              row.get('tipo'), row.get('identificador'))
             return None  # hash corrupto
 
         if not valido:
+            _registrar_acceso(usuario_normalizado, 'PASSWORD',
+                              row.get('tipo'), row.get('identificador'))
             return None  # contraseña incorrecta
 
         # Verificar expiración
@@ -74,6 +101,12 @@ def autenticar(input_usuario: str, password: str) -> dict:
                 expirada = fecha_exp < datetime.now(fecha_exp.tzinfo) if fecha_exp.tzinfo else fecha_exp < datetime.now()
             except Exception:
                 pass
+
+        # La contraseña era correcta. Si venció, app.py no lo deja pasar, así
+        # que se registra aparte: no fue una sesión iniciada.
+        _registrar_acceso(usuario_normalizado,
+                          'EXPIRADA' if expirada else 'OK',
+                          row.get('tipo'), row.get('identificador'))
 
         return {
             'tipo': row['tipo'],
