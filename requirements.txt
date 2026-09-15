@@ -1,5 +1,19 @@
-streamlit>=1.28.0
+# ATLAS — dependencias
+#
+# streamlit va CLAVADO a la version, no con >=, y es a proposito.
+#
+# Streamlit Cloud vuelve a resolver este archivo en cada reboot. Con >= se
+# instalaria la ultima (hoy 1.63), y la app fue construida y probada sobre
+# 1.45.1: serian 18 versiones de cambios entrando de golpe a una app que usan
+# 308 personas, sin que nadie los haya revisado. Si algun dia quieres subirla,
+# que sea a proposito y probando, no como efecto secundario de un reboot.
+streamlit==1.45.1
+
+# El componente de cookies (v17). Pide streamlit>=1.40.1, asi que cuadra.
+extra-streamlit-components==0.1.81
+
 pandas>=2.0.0
-supabase>=2.0.0
+# Tope en la mayor: supabase-py rompe compatibilidad entre versiones mayores.
+supabase>=2.0.0,<3
 bcrypt>=4.0.0
 Pillow>=10.0.0

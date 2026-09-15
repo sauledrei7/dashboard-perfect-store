@@ -460,6 +460,62 @@ def guardar_incidencia(curt: str, ruta: str, periodo_id: str, tipo: str,
 
 
 # ============================================================
+# BORRADOR DE INCIDENCIA  (v18)
+#
+# El formulario a medio llenar vivía solo en la memoria del servidor: si el
+# celular descartaba la pestaña mientras el promotor iba por el link de Trax,
+# regresaba con todo en blanco. Estas tres funciones guardan el avance.
+#
+# Ninguna se cachea a propósito: un borrador cambia todo el tiempo y un valor
+# viejo en caché sería justo lo contrario de lo que se busca.
+#
+# Las tres tragan sus errores. Perder un borrador es una molestia; tirar el
+# formulario mientras alguien lo llena es un problema de verdad.
+# ============================================================
+def get_borrador(username: str, curt: str) -> dict:
+    """El avance guardado de este promotor en esta tienda, o None."""
+    try:
+        sb = _get_client()
+        r = (sb.table('incidencias_borrador')
+               .select('datos, periodo_id')
+               .eq('username', username).eq('curt', str(curt))
+               .limit(1).execute())
+        return r.data[0] if r.data else None
+    except Exception as e:
+        print(f"[BORRADOR GET] {e}")
+        return None
+
+
+def guardar_borrador(username: str, curt: str, periodo_id: str, datos: dict) -> bool:
+    """Guarda o pisa el avance. Una fila por promotor y tienda."""
+    try:
+        sb = _get_client()
+        sb.table('incidencias_borrador').upsert({
+            'username': username,
+            'curt': str(curt),
+            'periodo_id': periodo_id,
+            'datos': datos,
+            'guardado_at': _dt.now().isoformat(),
+        }, on_conflict='username,curt').execute()
+        return True
+    except Exception as e:
+        print(f"[BORRADOR SET] {e}")
+        return False
+
+
+def borrar_borrador(username: str, curt: str) -> bool:
+    """Tira el borrador. Se llama al guardar la incidencia y al cancelar."""
+    try:
+        sb = _get_client()
+        (sb.table('incidencias_borrador').delete()
+           .eq('username', username).eq('curt', str(curt)).execute())
+        return True
+    except Exception as e:
+        print(f"[BORRADOR DEL] {e}")
+        return False
+
+
+# ============================================================
 # CATÁLOGO DE PRODUCTOS  (v13, tabla productos)
 # ============================================================
 @st.cache_data(ttl=1800, show_spinner=False)

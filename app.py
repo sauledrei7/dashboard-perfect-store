@@ -15,9 +15,10 @@ from styles.theme import (
     COLOR_GREEN, COLOR_GREEN_PALE, COLOR_AMBER, COLOR_RED_DARK, COLOR_RED_PALE,
     COLOR_RED_BORDER, COLOR_WHITE, COLOR_BLUE_BG,
 )
+import sesion
 from auth import (
     autenticar, esta_autenticado, get_usuario_actual, cerrar_sesion,
-    get_periodo_actual, set_periodo_actual,
+    get_periodo_actual, set_periodo_actual, recuperar_usuario,
 )
 from components import promotor_resumen, promotor_tiendas, tienda_detalle
 from components import supervisor_resumen, supervisor_promotores, supervisor_promotor_resumen
@@ -83,13 +84,10 @@ def pantalla_login():
                 set_periodo_actual(get_periodo_default())
             except Exception:
                 pass
-            # Pantalla inicial según tipo
-            if resultado['tipo'] == 'promotor':
-                st.session_state.pantalla = 'resumen_promotor'
-            elif resultado['tipo'] == 'am':
-                st.session_state.pantalla = 'resumen_am'
-            else:
-                st.session_state.pantalla = 'resumen_supervisor'
+            st.session_state.pantalla = _pantalla_inicial(resultado['tipo'])
+            # La cookie NO se escribe aquí: el st.rerun() de abajo se llevaría
+            # la orden antes de que llegue al navegador. La escribe
+            # _refrescar_cookie() en el render siguiente, que es tranquilo.
             st.rerun()
 
 
@@ -146,12 +144,81 @@ def _scroll_top():
 
 
 # ============================================================
+# SESIÓN PERSISTENTE (v17)
+#
+# Antes, la sesión vivía solo en la RAM del servidor. Cuando el promotor se
+# salía a la cámara o a Trax, el celular suspendía la pestaña, la conexión se
+# cortaba, y al volver la app lo mandaba al login con la incidencia a medias.
+# Ver sesion.py para el detalle de cómo se resolvió.
+# ============================================================
+def _pantalla_inicial(tipo: str) -> str:
+    """Con qué pantalla arranca cada rol. Está en un solo lugar porque lo usan
+    tanto el login como la restauración desde la cookie."""
+    if tipo == 'promotor':
+        return 'resumen_promotor'
+    if tipo == 'am':
+        return 'resumen_am'
+    return 'resumen_supervisor'
+
+
+def _restaurar_sesion() -> bool:
+    """Reconstruye la sesión desde la cookie del celular.
+
+    Si lo logra deja todo listo para que el router siga de largo en este mismo
+    render: el promotor no alcanza a ver el login ni por un parpadeo.
+    """
+    username = sesion.restaurar()
+    if not username:
+        return False
+
+    usuario = recuperar_usuario(username)
+    if not usuario:
+        # La firma venía bien, pero el usuario ya no existe, lo desactivaron o
+        # se le venció la contraseña. La cookie sobra: que se vaya.
+        sesion.borrar()
+        return False
+
+    st.session_state.autenticado = True
+    st.session_state.usuario = usuario
+    try:
+        set_periodo_actual(get_periodo_default())
+    except Exception:
+        pass
+    st.session_state.pantalla = _pantalla_inicial(usuario['tipo'])
+    return True
+
+
+def _refrescar_cookie():
+    """Escribe o renueva la cookie, una sola vez por sesión.
+
+    Renovarla en cada entrada hace que la vigencia sea corrediza: mientras el
+    promotor siga usando la app, no se le vence a media jornada.
+
+    Va aquí, en un render normal, y nunca pegado a un st.rerun(): el componente
+    que escribe la cookie necesita que el render alcance a llegar al navegador.
+    """
+    if st.session_state.get('_cookie_escrita'):
+        return
+    username = (st.session_state.get('usuario') or {}).get('username')
+    if username and sesion.guardar(username):
+        st.session_state['_cookie_escrita'] = True
+
+
+# ============================================================
 # ROUTER
 # ============================================================
 def main():
     if not esta_autenticado():
-        pantalla_login()
-        return
+        # La orden de borrar la cookie que dejó cerrar_sesion(). Se ejecuta
+        # aquí y no allá porque allá viene un st.rerun() inmediato.
+        if st.session_state.pop('_borrar_cookie', False):
+            sesion.borrar()
+
+        if st.session_state.get('_no_restaurar') or not _restaurar_sesion():
+            pantalla_login()
+            return
+
+    _refrescar_cookie()
 
     usuario = get_usuario_actual()
     pantalla = st.session_state.get('pantalla', 'resumen_promotor')

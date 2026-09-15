@@ -48,6 +48,24 @@ def _registrar_acceso(username: str, resultado: str,
         print(f"[ACCESOS WARN] no se pudo registrar el acceso: {e}")
 
 
+def _esta_vencida(row: dict) -> bool:
+    """¿Ya venció la contraseña de este usuario?
+
+    Vive aparte porque lo usan dos caminos —el login normal y la restauración
+    desde la cookie— y si cada uno trajera su propia copia, tarde o temprano
+    uno de los dos se quedaría atrás.
+    """
+    if not row.get('password_expira'):
+        return False
+    try:
+        fecha_exp = datetime.fromisoformat(row['password_expira'].replace('Z', '+00:00'))
+        if fecha_exp.tzinfo:
+            return fecha_exp < datetime.now(fecha_exp.tzinfo)
+        return fecha_exp < datetime.now()
+    except Exception:
+        return False
+
+
 def autenticar(input_usuario: str, password: str) -> dict:
     """
     Valida contraseña EN PYTHON con bcrypt.
@@ -94,13 +112,7 @@ def autenticar(input_usuario: str, password: str) -> dict:
             return None  # contraseña incorrecta
 
         # Verificar expiración
-        expirada = False
-        if row.get('password_expira'):
-            try:
-                fecha_exp = datetime.fromisoformat(row['password_expira'].replace('Z', '+00:00'))
-                expirada = fecha_exp < datetime.now(fecha_exp.tzinfo) if fecha_exp.tzinfo else fecha_exp < datetime.now()
-            except Exception:
-                pass
+        expirada = _esta_vencida(row)
 
         # La contraseña era correcta. Si venció, app.py no lo deja pasar, así
         # que se registra aparte: no fue una sesión iniciada.
@@ -124,9 +136,79 @@ def autenticar(input_usuario: str, password: str) -> dict:
         return None
 
 
+def recuperar_usuario(username: str) -> dict:
+    """v17: relee al usuario para restaurar una sesión desde la cookie.
+
+    A propósito NO recibe contraseña: la firma de la cookie ya probó quién es.
+    Lo que sí hace es volver a leer rol, ruta y estado desde la base, en vez de
+    confiar en lo que traiga la cookie. Así, una cookie de ayer no revive a
+    alguien con la ruta vieja, ni deja entrar a quien ya fue dado de baja o a
+    quien se le venció la contraseña mientras tanto.
+
+    Devuelve None si por cualquier razón no debe pasar; el que llama se encarga
+    de mandarlo al login.
+    """
+    try:
+        sb = _get_client()
+        r = sb.table('usuarios').select(
+            'tipo, identificador, nombre, activo, password_expira'
+        ).eq('username', username).limit(1).execute()
+
+        if not r.data:
+            return None
+
+        row = r.data[0]
+        tipo, ident = row.get('tipo'), row.get('identificador')
+
+        if not row.get('activo', True):
+            _registrar_acceso(username, 'INACTIVO', tipo, ident)
+            return None
+
+        if _esta_vencida(row):
+            _registrar_acceso(username, 'EXPIRADA', tipo, ident)
+            return None
+
+        # Se registra como COOKIE y no como OK a propósito: no volvió a teclear
+        # la contraseña. Separarlos deja ver cuánta gente entra sola y cuánta
+        # de verdad inicia sesión.
+        _registrar_acceso(username, 'COOKIE', tipo, ident)
+
+        return {
+            'tipo': row['tipo'],
+            'identificador': row['identificador'],
+            'nombre': row['nombre'],
+            'username': username,
+            'expirada': False,
+        }
+
+    except Exception as e:
+        # Si la base no responde, se pide contraseña. Nunca se deja pasar a
+        # ciegas solo porque la cookie venía bien firmada.
+        print(f"[AUTH RESTORE ERROR] {e}")
+        return None
+
+
 def cerrar_sesion():
     for key in list(st.session_state.keys()):
         del st.session_state[key]
+
+    # Estas dos banderas se ponen DESPUÉS de vaciar, y son lo único que
+    # sobrevive al cierre de sesión:
+    #
+    # _borrar_cookie  la orden de quitar la cookie del celular. No se ejecuta
+    #                 aquí porque todos los que llaman a cerrar_sesion() hacen
+    #                 st.rerun() de inmediato, y ese rerun se llevaría la orden
+    #                 entre las patas antes de que llegue al navegador. app.py
+    #                 la ejecuta en el render siguiente, que es tranquilo.
+    #
+    # _no_restaurar   impide que la app vuelva a entrar sola en lo que queda de
+    #                 esta conexión. Hace falta porque st.context.cookies lee de
+    #                 los encabezados que el navegador mandó al conectarse, y
+    #                 esos ya no cambian: sin esta bandera, el siguiente render
+    #                 encontraría la cookie vieja y el "cerrar sesión" no
+    #                 serviría de nada.
+    st.session_state['_borrar_cookie'] = True
+    st.session_state['_no_restaurar'] = True
 
 
 def esta_autenticado() -> bool:
