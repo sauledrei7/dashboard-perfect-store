@@ -13,6 +13,9 @@ Cambios v13 (antes: 1 solo dropdown de tipo):
 Se mantiene: semana, explicación obligatoria, link de Trax, 1 a 3 fotos.
 El promotor puede levantar N incidencias por tienda.
 """
+import hashlib
+import json
+
 import streamlit as st
 import render as r
 import pandas as pd
@@ -26,6 +29,7 @@ from styles.theme import (
 from data import (
     guardar_incidencia, subir_foto_incidencia, get_incidencias_de_tienda,
     get_detalle_tienda, adaptar_detalle, get_productos, get_oos_tienda,
+    get_borrador, guardar_borrador, borrar_borrador,
 )
 
 # ============================================================
@@ -328,7 +332,12 @@ def render_seccion(curt, periodo_id, info):
         st.session_state[abierto_key] = False
 
     if not st.session_state[abierto_key]:
-        if st.button("＋ Levantar incidencia", key=f"btn_abrir_inc_{curt}"):
+        # v18: si dejó algo a medias, que el botón lo diga. Si no, no hay
+        # forma de que sepa que su avance sigue ahí.
+        pendiente = bool(_borrador_de(curt, periodo_id))
+        etiqueta = ("▸ Seguir con la incidencia que dejaste" if pendiente
+                    else "＋ Levantar incidencia")
+        if st.button(etiqueta, key=f"btn_abrir_inc_{curt}"):
             st.session_state[abierto_key] = True
             st.rerun()
         return
@@ -344,7 +353,265 @@ def _semanas_del_periodo(curt, periodo_id):
     return []
 
 
+# ============================================================
+# BORRADOR (v18)
+#
+# v17 logró que el promotor volviera identificado, pero el formulario a medio
+# llenar seguía viviendo en la memoria del servidor. Si el celular alcanzaba a
+# descartar la pestaña —lo típico al salir a Trax por el link— regresaba a un
+# formulario en blanco.
+#
+# Aquí el avance se guarda conforme lo escriben, y se repone al volver.
+#
+# Las fotos NO van al borrador, a propósito: ver el comentario del SQL. En
+# corto, son archivos y guardarlas dejaría basura en Storage cada vez que
+# alguien abandona un borrador; y desde v17 tomar fotos ya no saca de la app,
+# así que casi nunca hay fotos que perder cuando esto se cae.
+# ============================================================
+# INTERRUPTOR DE EMERGENCIA.
+#
+# Ponlo en False y haz Reboot: el borrador se apaga por completo —ni lee ni
+# escribe— y el formulario vuelve a comportarse exactamente como antes de v18.
+# Todo lo demás (la sesión que no te saca al login, la cámara dentro de la app)
+# sigue funcionando.
+#
+# Está aquí para que, si algo se pone raro en campo, tengas cómo apagar SOLO
+# esto en dos minutos, sin revertir el despliegue completo ni tocar la base.
+BORRADOR_ACTIVO = True
+
+
+def _username():
+    return (st.session_state.get('usuario') or {}).get('username')
+
+
+def _borrador_de(curt, periodo_id):
+    """Lee el borrador UNA vez por sesión y tienda, y se queda con él.
+
+    Sin este candado cada rerun sería una consulta más, y Streamlit hace un
+    rerun cada vez que el promotor toca cualquier cosa del formulario.
+    """
+    if not BORRADOR_ACTIVO:
+        return None
+
+    cache_key = f"inc_borr_cache_{curt}"
+    if cache_key in st.session_state:
+        return st.session_state[cache_key]
+
+    datos = None
+    username = _username()
+    if username:
+        fila = get_borrador(username, curt)
+        # Un borrador de otro periodo ya no sirve: las semanas no coinciden.
+        if fila and fila.get('periodo_id') == periodo_id:
+            datos = fila.get('datos') or None
+
+    st.session_state[cache_key] = datos
+    return datos
+
+
+def _olvidar_borrador(curt):
+    """Tira el avance, en la base y en la sesión. Al guardar y al cancelar."""
+    username = _username()
+    if username and BORRADOR_ACTIVO:
+        borrar_borrador(username, curt)
+    for k in (f"inc_borr_cache_{curt}", f"inc_borr_puesto_{curt}",
+              f"inc_borr_firma_{curt}", f"inc_borr_aviso_{curt}"):
+        st.session_state.pop(k, None)
+
+
+def _restaurar_borrador(curt, periodo_id, opciones_kpi, semanas):
+    """Repone en pantalla lo que el promotor llevaba escrito.
+
+    Corre una sola vez por formulario abierto y ANTES de que se dibuje ningún
+    widget: la única manera de pre-llenar un widget de Streamlit es dejarle el
+    valor en session_state antes de crearlo.
+
+    Cada valor se valida contra las opciones de HOY. Uno que ya no exista
+    —la tienda pasó a Perfect Store y su KPI ya no está permitido, o la semana
+    se salió del periodo— tiraría el widget con excepción, así que se descarta
+    en silencio.
+
+    Devuelve True si repuso algo, para poder avisarle al promotor.
+    """
+    puesto_key = f"inc_borr_puesto_{curt}"
+    if st.session_state.get(puesto_key):
+        return st.session_state.get(f"inc_borr_aviso_{curt}", False)
+    st.session_state[puesto_key] = True
+
+    datos = _borrador_de(curt, periodo_id)
+    if not datos:
+        return False
+
+    repuesto = False
+
+    kpi = datos.get('kpi')
+    if kpi in opciones_kpi:
+        st.session_state[f"inc_kpi_{curt}"] = kpi
+        repuesto = True
+
+        motivo = datos.get('motivo')
+        if motivo in incidencias_de(kpi):
+            # La llave del motivo lleva el KPI dentro, así que solo cuadra
+            # porque arriba ya se repuso ese mismo KPI.
+            st.session_state[f"inc_motivo_{curt}_{kpi}"] = motivo
+
+            productos = datos.get('productos') or []
+            if motivo in INCIDENCIAS_DE_PRODUCTO and productos:
+                cat = CATEGORIA_POR_KPI.get(kpi)
+                try:
+                    catalogo = set(get_productos(kpi, cat)['producto'].tolist())
+                except Exception:
+                    catalogo = set()
+                validos = [p for p in productos if p == TODOS or p in catalogo]
+                if validos:
+                    st.session_state[f"inc_prod_{curt}_{kpi}_{cat or 'all'}"] = validos
+
+    if datos.get('semana') in semanas:
+        st.session_state[f"inc_sem_{curt}"] = datos['semana']
+        repuesto = True
+
+    for campo, llave in (('comentario', 'inc_com'), ('link_trax', 'inc_trax')):
+        valor = (datos.get(campo) or '').strip()
+        if valor:
+            st.session_state[f"{llave}_{curt}"] = valor
+            repuesto = True
+
+    st.session_state[f"inc_borr_aviso_{curt}"] = repuesto
+    return repuesto
+
+
+def _guardar_borrador_si_cambio(curt, periodo_id, valores):
+    """Guarda el avance, pero solo cuando de verdad cambió algo.
+
+    La comparación no es un lujo: Streamlit vuelve a correr el script cada vez
+    que tocan cualquier campo, y sin ella cada uno de esos reruns sería una
+    escritura a Supabase en medio de que están escribiendo.
+    """
+    if not BORRADOR_ACTIVO:
+        return
+
+    limpio = {k: v for k, v in valores.items() if v not in (None, '', [], ())}
+    firma = json.dumps(limpio, sort_keys=True, default=str)
+
+    firma_key = f"inc_borr_firma_{curt}"
+    if st.session_state.get(firma_key) == firma:
+        return
+    st.session_state[firma_key] = firma
+
+    if not limpio:
+        return   # abrieron el formulario y no han escrito nada todavía
+
+    username = _username()
+    if username:
+        guardar_borrador(username, curt, periodo_id, limpio)
+
+
+# ============================================================
+# FOTOS (v17)
+#
+# Antes esto era un st.file_uploader a secas. El problema no era el widget:
+# era que en el celular abrir la galería o la cámara SACA del navegador, y
+# mientras el promotor está afuera el sistema operativo suspende la pestaña.
+# Al volver, se perdía la sesión y el formulario completo.
+#
+# st.camera_input abre la cámara DENTRO de la página. No sale del navegador,
+# así que la pestaña no se suspende y no se pierde nada.
+# ============================================================
+MAX_FOTOS = 3
+
+
+def _agregar_foto(acum, datos) -> bool:
+    """Suma una foto al montón si no está repetida y si todavía cabe.
+
+    La huella hace falta porque los widgets devuelven la MISMA foto en cada
+    corrida del script mientras no se limpien: sin ella, la foto entraría
+    varias veces.
+    """
+    if not datos or len(acum) >= MAX_FOTOS:
+        return False
+    huella = hashlib.md5(datos).hexdigest()
+    if any(h == huella for _n, _d, h in acum):
+        return False
+    acum.append((f"foto_{len(acum) + 1}.jpg", datos, huella))
+    return True
+
+
+def _selector_fotos(curt):
+    """De 1 a 3 fotos. Devuelve la lista de (nombre, bytes, huella).
+
+    Las fotos se acumulan en session_state y no en el widget, porque
+    st.camera_input solo se queda con la última: sin acumulador no se podrían
+    juntar tres.
+    """
+    acum_key = f"inc_fotos_acum_{curt}"
+    if acum_key not in st.session_state:
+        st.session_state[acum_key] = []
+    acum = st.session_state[acum_key]
+
+    st.caption(f"Fotos: llevas {len(acum)} de {MAX_FOTOS} (mínimo 1)")
+
+    if len(acum) < MAX_FOTOS:
+        modo = st.radio(
+            "Cómo agregar la foto",
+            ["📸 Tomar ahora", "🖼️ De galería"],
+            key=f"inc_modofoto_{curt}", horizontal=True, label_visibility="collapsed",
+        )
+
+        # La llave lleva len(acum) para que el widget se limpie solo después de
+        # cada foto: si no, se queda mostrando la anterior y confunde.
+        if modo.startswith("📸"):
+            st.caption("Se abre aquí mismo, sin salir de la app.")
+            tomada = st.camera_input("Tomar foto", label_visibility="collapsed",
+                                     key=f"inc_cam_{curt}_{len(acum)}")
+            if tomada is not None and _agregar_foto(acum, tomada.getvalue()):
+                st.rerun()
+        else:
+            st.caption("Ojo: al abrir la galería el celular puede cerrar la app "
+                       "y perderías lo que llevas. Si te pasa, usa \"Tomar ahora\".")
+            subidas = st.file_uploader(
+                "Fotos", type=['jpg', 'jpeg', 'png'], accept_multiple_files=True,
+                label_visibility="collapsed", key=f"inc_fotos_{curt}_{len(acum)}",
+            )
+            # Lista y no generador: any() cortaría al primer True y se
+            # quedarían fuera las demás fotos que hayan seleccionado.
+            agregadas = [_agregar_foto(acum, f.getvalue()) for f in (subidas or [])]
+            if any(agregadas):
+                st.rerun()
+    else:
+        st.caption("Ya tienes las 3. Quita una si quieres cambiarla.")
+
+    if acum:
+        cols = st.columns(MAX_FOTOS)
+        for i, (_nombre, datos, _h) in enumerate(list(acum)):
+            with cols[i]:
+                st.image(datos, use_container_width=True)
+                if st.button("Quitar", key=f"inc_quitafoto_{curt}_{i}"):
+                    acum.pop(i)
+                    st.rerun()
+
+    return acum
+
+
+def _limpiar_fotos(curt):
+    """Vacía el montón de fotos. Se llama al cancelar y al guardar, para que la
+    siguiente incidencia de esta tienda no arranque con las fotos de la pasada."""
+    st.session_state.pop(f"inc_fotos_acum_{curt}", None)
+
+
 def _render_formulario(curt, periodo_id, info, ruta, abierto_key, permitidos=None):
+    # Estas dos suben aquí porque el borrador se repone ANTES de dibujar nada,
+    # y para validar lo que trae necesita saber qué opciones hay hoy.
+    opciones_kpi = permitidos or list(KPIS)
+    semanas = _semanas_del_periodo(curt, periodo_id)
+
+    try:
+        recuperado = _restaurar_borrador(curt, periodo_id, opciones_kpi, semanas)
+    except Exception as e:
+        # Reponer el avance es un extra. Si algo sale mal el formulario tiene
+        # que abrir en blanco, nunca dejar de abrir.
+        print(f"[BORRADOR RESTAURAR] {e}")
+        recuperado = False
+
     r.html(f"""
     <div style="background:{COLOR_PINK_PALE};border:0.5px solid {COLOR_PINK_BORDER};
     border-radius:12px;padding:4px 14px 14px;margin:6px 0 10px;">
@@ -354,12 +621,20 @@ def _render_formulario(curt, periodo_id, info, ruta, abierto_key, permitidos=Non
     </div>
     """)
 
+    if recuperado:
+        r.html(
+            f'<div style="background:{COLOR_GREEN_PALE};border:0.5px solid {COLOR_GREEN_BORDER};'
+            f'border-radius:10px;padding:10px 12px;margin:0 0 10px;">'
+            f'<p style="font-size:12px;color:{COLOR_GREEN_TEXT};margin:0;line-height:1.45;">'
+            f'✓ <b>Recuperamos lo que llevabas.</b> Revísalo por si algo cambió. '
+            f'Las fotos sí hay que volver a tomarlas.</p></div>'
+        )
+
     _render_guia_general()
 
     # ---------- 1. KPI afectado ----------
     # En tiendas Perfect Store la lista viene recortada a OOS: no tiene caso
     # mostrar un dropdown de una sola opción, se informa y ya.
-    opciones_kpi = permitidos or list(KPIS)
     if len(opciones_kpi) == 1:
         kpi = opciones_kpi[0]
         r.html(
@@ -404,7 +679,6 @@ def _render_formulario(curt, periodo_id, info, ruta, abierto_key, permitidos=Non
         productos_sel, categoria = _selector_productos(curt, kpi, cat_del_kpi)
 
     # ---------- 4. Semana ----------
-    semanas = _semanas_del_periodo(curt, periodo_id)
     if semanas:
         semana = st.selectbox("Semana afectada", semanas,
                               index=None, placeholder=ELIGE,
@@ -426,19 +700,24 @@ def _render_formulario(curt, periodo_id, info, ruta, abierto_key, permitidos=Non
                               placeholder="https://...")
 
     # ---------- 7. Fotos ----------
-    st.caption("Sube de 1 a 3 fotos (obligatorio)")
-    fotos = st.file_uploader(
-        "Fotos", type=['jpg', 'jpeg', 'png'], accept_multiple_files=True,
-        key=f"inc_fotos_{curt}", label_visibility="collapsed",
-    )
-    n_fotos = len(fotos) if fotos else 0
-    if n_fotos > 3:
-        st.warning("Máximo 3 fotos. Se tomarán las primeras 3.")
+    fotos = _selector_fotos(curt)
+    n_fotos = len(fotos)
+
+    # v18: se guarda el avance aquí, ya con todos los campos leídos, y antes de
+    # los botones: así queda a salvo aunque el celular corte la conexión en el
+    # siguiente paso.
+    _guardar_borrador_si_cambio(curt, periodo_id, {
+        'kpi': kpi, 'motivo': motivo, 'categoria': categoria,
+        'productos': productos_sel, 'semana': semana,
+        'comentario': comentario, 'link_trax': link_trax,
+    })
 
     col1, col2 = st.columns([1, 1])
     with col1:
         if st.button("Cancelar", key=f"inc_cancel_{curt}"):
             st.session_state[abierto_key] = False
+            _limpiar_fotos(curt)
+            _olvidar_borrador(curt)
             st.rerun()
     with col2:
         guardar = st.button("Guardar incidencia", key=f"inc_guardar_{curt}", type="primary")
@@ -475,12 +754,11 @@ def _render_formulario(curt, periodo_id, info, ruta, abierto_key, permitidos=Non
         st.error("Te falta " + ", ".join(faltan) + ".")
         return
 
-    fotos_usar = fotos[:3]
     with st.spinner("Subiendo fotos y guardando..."):
         try:
             paths = []
-            for f in fotos_usar:
-                paths.append(subir_foto_incidencia(f.getvalue(), ruta, str(curt)))
+            for _nombre, datos, _huella in fotos[:MAX_FOTOS]:
+                paths.append(subir_foto_incidencia(datos, ruta, str(curt)))
             guardar_incidencia(
                 curt=curt, ruta=ruta, periodo_id=periodo_id, tipo=kpi,
                 semana=semana, comentario=comentario.strip(), fotos_paths=paths,
@@ -498,6 +776,8 @@ def _render_formulario(curt, periodo_id, info, ruta, abierto_key, permitidos=Non
 
     get_incidencias_de_tienda.clear()
     st.session_state[abierto_key] = False
+    _limpiar_fotos(curt)
+    _olvidar_borrador(curt)
     st.success("Incidencia guardada ✓")
     st.rerun()
 
