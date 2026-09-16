@@ -23,6 +23,7 @@ from auth import (
 from components import promotor_resumen, promotor_tiendas, tienda_detalle
 from components import supervisor_resumen, supervisor_promotores, supervisor_promotor_resumen
 from components import am_resumen, am_supervisores
+from components import director
 from data import listar_periodos, get_periodo_default, get_tiendas_de_ruta, adaptar_tiendas, get_resumen_promotor, adaptar_promotor
 
 
@@ -158,6 +159,8 @@ def _pantalla_inicial(tipo: str) -> str:
         return 'resumen_promotor'
     if tipo == 'am':
         return 'resumen_am'
+    if tipo == 'admin':
+        return 'director'
     return 'resumen_supervisor'
 
 
@@ -264,26 +267,59 @@ def main():
 
     # FLUJO AREA MANAGER (v9)
     elif usuario['tipo'] == 'am':
-        if pantalla == 'resumen_am':
-            am_resumen.render(usuario, periodo_id)
-        elif pantalla == 'lista_supervisores_am':
-            am_supervisores.render(usuario, periodo_id)
-        elif pantalla == 'promotores_de_supervisor_am':
-            _render_promotores_para_am(usuario, periodo_id)
-        elif pantalla == 'resumen_de_promotor':
-            supervisor_promotor_resumen.render(periodo_id, volver_a='promotores_de_supervisor_am')
-        elif pantalla == 'tiendas_de_promotor':
-            _render_tiendas_promotor_para_supervisor(usuario, periodo_id)
-        elif pantalla == 'detalle_tienda':
-            st.session_state.volver_a = 'tiendas_de_promotor'
-            tienda_detalle.render(periodo_id)
+        _flujo_am(usuario, pantalla, periodo_id)
+
+    # FLUJO DIRECTOR (v20). En la base es tipo 'admin', que ya venía permitido
+    # desde el diseño original de la tabla usuarios.
+    elif usuario['tipo'] == 'admin':
+        if pantalla == 'director':
+            director.render(usuario, periodo_id)
         else:
-            am_resumen.render(usuario, periodo_id)
+            _render_director_en_vista_am(usuario, pantalla, periodo_id)
 
     else:
         st.error("Tipo de usuario no reconocido.")
         cerrar_sesion()
         st.rerun()
+
+
+def _flujo_am(usuario, pantalla, periodo_id):
+    """v9: las pantallas del Area Manager. Viven en una función aparte desde v20
+    porque el director entra a ellas también, parado en el área que eligió."""
+    if pantalla == 'resumen_am':
+        am_resumen.render(usuario, periodo_id)
+    elif pantalla == 'lista_supervisores_am':
+        am_supervisores.render(usuario, periodo_id)
+    elif pantalla == 'promotores_de_supervisor_am':
+        _render_promotores_para_am(usuario, periodo_id)
+    elif pantalla == 'resumen_de_promotor':
+        supervisor_promotor_resumen.render(periodo_id, volver_a='promotores_de_supervisor_am')
+    elif pantalla == 'tiendas_de_promotor':
+        _render_tiendas_promotor_para_supervisor(usuario, periodo_id)
+    elif pantalla == 'detalle_tienda':
+        st.session_state.volver_a = 'tiendas_de_promotor'
+        tienda_detalle.render(periodo_id)
+    else:
+        am_resumen.render(usuario, periodo_id)
+
+
+def _render_director_en_vista_am(usuario, pantalla, periodo_id):
+    """v20: el director dentro de las pantallas del AM.
+
+    No hay pantallas nuevas para bajar a supervisor, promotor o tienda: se
+    reusan las del AM tal cual, como si el director fuera el AM del área que
+    eligió en el tablero. Arriba siempre queda un botón para volver.
+    """
+    area = st.session_state.get('director_area')
+    if not area:
+        st.session_state.pantalla = 'director'
+        st.rerun()
+    if st.button("← Volver al tablero", key="dir_volver_tablero"):
+        st.session_state.pantalla = 'director'
+        st.rerun()
+    como_am = dict(usuario, tipo='am', identificador=area,
+                   nombre=f"{usuario.get('nombre') or 'Director'} · {area}")
+    _flujo_am(como_am, pantalla, periodo_id)
 
 
 def _render_promotores_para_am(usuario, periodo_id):

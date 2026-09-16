@@ -682,3 +682,124 @@ def get_oos_ruta_por_semana(ruta: str, periodo_id: str) -> pd.DataFrame:
     except Exception as e:
         print(f"[OOS_RUTA_SEMANA ERROR] {e}")
         return pd.DataFrame()
+
+
+# ============================================================
+# TABLERO DEL DIRECTOR  (v20)
+#
+# El director ve las 4 áreas juntas, y eso choca con un límite que el resto de
+# la app nunca toca: la API de Supabase regresa como máximo N filas por
+# consulta (1,000 de fábrica) y NO avisa cuando se queda corta. Un promotor
+# pide 6 tiendas; el director pide 4,000 respuestas OOS de un solo mes. Sin
+# paginar, el tablero enseñaría números incompletos sin ningún error.
+#
+# _leer_todo() pide por tandas hasta que una tanda llega vacía. No se fía de
+# "llegaron menos de 1,000, ya acabé": si alguien baja el límite en el panel de
+# Supabase a 500, esa regla cortaría en la primera tanda.
+#
+# Los cálculos viven en director_calc.py (pandas puro, sin Streamlit). Aquí
+# solo se lee y se cachea.
+# ============================================================
+_TANDA = 1000
+COLUMNAS_TIENDA_DIRECTOR = ('ruta, canal, tienda_visitada, es_ps, sos_whisky, sos_tequila, '
+                            'sos_vodka, obj_whisky, obj_tequila, obj_vodka, cumplio_4')
+
+
+def _leer_todo(tabla: str, columnas: str = '*', eq: dict = None, gte: dict = None) -> pd.DataFrame:
+    """Toda la tabla (con filtros) sin importar el límite de filas de la API.
+    Ordena por id para que las tandas no se encimen ni se salten filas."""
+    sb = _get_client()
+    filas, desde = [], 0
+    while True:
+        q = sb.table(tabla).select(columnas)
+        for campo, valor in (eq or {}).items():
+            q = q.eq(campo, valor)
+        for campo, valor in (gte or {}).items():
+            q = q.gte(campo, valor)
+        lote = q.order('id').range(desde, desde + _TANDA - 1).execute().data or []
+        if not lote:
+            break
+        filas.extend(lote)
+        desde += len(lote)
+    return pd.DataFrame(filas)
+
+
+@st.cache_data(ttl=600, show_spinner=False)
+def get_periodos_director() -> pd.DataFrame:
+    """Periodos del más viejo al más nuevo, con sus semanas."""
+    sb = _get_client()
+    r = sb.table('periodos').select('*').order('fecha_inicio').execute()
+    return pd.DataFrame(r.data) if r.data else pd.DataFrame()
+
+
+@st.cache_data(ttl=300, show_spinner=False)
+def get_oos_respuestas_director() -> pd.DataFrame:
+    """Respuestas OOS de todos los periodos (para mezcla semanal y reincidencia)."""
+    return _leer_todo('oos_respuestas', 'ruta, periodo_id, semana, motivo, veces')
+
+
+@st.cache_data(ttl=120, show_spinner=False)
+def get_incidencias_director(periodo_id: str) -> pd.DataFrame:
+    """Incidencias del periodo, sin fotos ni comentarios: solo lo que se cuenta."""
+    try:
+        return _leer_todo('incidencias', 'ruta, tipo, incidencia, estado, created_at, resuelta_en',
+                          eq={'periodo_id': periodo_id})
+    except Exception as e:
+        print(f"[DIRECTOR INCIDENCIAS] {e}")
+        return pd.DataFrame()
+
+
+@st.cache_data(ttl=300, show_spinner=False)
+def get_tablero_director(periodo_id: str) -> dict:
+    """Todo lo que el tablero pinta de UN periodo, ya calculado.
+
+    Las áreas se agrupan con el maestro del periodo más reciente (ver
+    director_calc), así que se lee también su kpis_promotor.
+    """
+    import director_calc as dc
+
+    periodos = get_periodos_director()
+    fila = periodos[periodos['periodo_id'] == periodo_id]
+    if len(fila) == 0:
+        return None
+    reciente = periodos.iloc[-1]['periodo_id']
+
+    kp = _leer_todo('kpis_promotor', eq={'periodo_id': periodo_id})
+    if len(kp) == 0:
+        return None
+    kp_reciente = kp if reciente == periodo_id else _leer_todo(
+        'kpis_promotor', 'ruta, supervisor, area_manager', eq={'periodo_id': reciente})
+    ks = _leer_todo('kpis_supervisor', eq={'periodo_id': periodo_id})
+    rt = _leer_todo('resumen_tienda', COLUMNAS_TIENDA_DIRECTOR, eq={'periodo_id': periodo_id})
+
+    ruta_area, sup_area = dc.mapa_areas(kp_reciente)
+    orr = dc.preparar_respuestas(get_oos_respuestas_director(), ruta_area)
+    P = dc.tablero_periodo(fila.iloc[0].to_dict(), kp, ks, rt, orr, ruta_area, sup_area,
+                           incidencias=get_incidencias_director(periodo_id))
+    P['semanal'] = dc.mezcla_semanal(orr, P['s_fin'])
+    return P
+
+
+@st.cache_data(ttl=120, show_spinner=False)
+def get_uso_director(periodo_id: str, dias: int = 35) -> dict:
+    """Quién entra a ATLAS y cómo se atienden las incidencias.
+
+    De usuarios se leen SOLO username, tipo, identificador y activo: el hash
+    de la contraseña nunca sale de la base para esta pantalla.
+    """
+    import director_calc as dc
+    try:
+        # Con 'Z' y sin '+00:00': un '+' mal codificado en la URL se vuelve espacio.
+        desde = (pd.Timestamp.now(tz='UTC') - pd.Timedelta(days=dias)).strftime('%Y-%m-%dT%H:%M:%SZ')
+        usuarios = _leer_todo('usuarios', 'username, tipo, identificador, activo')
+        accesos = _leer_todo('accesos', 'username, resultado, entro_at', gte={'entro_at': desde})
+        kp = _leer_todo('kpis_promotor', 'ruta, supervisor, area_manager', eq={'periodo_id': periodo_id})
+        periodos = get_periodos_director()
+        reciente = periodos.iloc[-1]['periodo_id'] if len(periodos) else periodo_id
+        kp_reciente = kp if reciente == periodo_id else _leer_todo(
+            'kpis_promotor', 'ruta, supervisor, area_manager', eq={'periodo_id': reciente})
+        ruta_area, _ = dc.mapa_areas(kp_reciente)
+        return dc.uso_atlas(usuarios, accesos, get_incidencias_director(periodo_id), kp, ruta_area)
+    except Exception as e:
+        print(f"[DIRECTOR USO] {e}")
+        return None
