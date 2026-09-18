@@ -11,7 +11,8 @@ Las secciones están en director_secciones.py.
 import streamlit as st
 import render as r
 from auth import cerrar_sesion, set_periodo_actual
-from data import get_periodos_director, get_tablero_director
+import pandas as pd
+from data import get_periodos_director, get_tablero_director, get_resumen_director, limpiar_cache_director
 from components import director_secciones as sec
 
 SECCIONES = [
@@ -233,6 +234,11 @@ def _menu(usuario, seccion):
             st.session_state['dir_seccion'] = sid
             st.rerun()
     st.write("")
+    # v20.1: el tablero guarda los datos 1 hora. Este botón los relee al
+    # momento, por ejemplo justo después de subir una corrida.
+    if st.button("Actualizar datos", key="dirlink_actualizar", icon=":material/refresh:", use_container_width=True):
+        limpiar_cache_director()
+        st.rerun()
     if st.button("Salir", key="dir_salir", use_container_width=True):
         cerrar_sesion()
         st.rerun()
@@ -282,8 +288,16 @@ def _contenido(periodos, periodo_id, seccion):
             PREV = get_tablero_director(ids[pos - 1]) if pos > 0 else None
             historial = []
             if seccion == 'inicio':
+                # Para la gráfica de tendencia basta el resumen de país y
+                # áreas; el tablero completo solo se arma del mes que se ve
+                # y del anterior (que ya se necesita para las comparaciones).
                 for pid in ids[-PERIODOS_EN_TENDENCIA:]:
-                    h = P if pid == periodo_id else get_tablero_director(pid)
+                    if pid == periodo_id:
+                        h = P
+                    elif PREV and pid == PREV['id']:
+                        h = PREV
+                    else:
+                        h = get_resumen_director(pid)
                     if h:
                         historial.append(h)
     except Exception as e:
@@ -306,4 +320,15 @@ def _contenido(periodos, periodo_id, seccion):
      'supervisores': lambda: sec.supervisores(P, PREV),
      'foco': lambda: sec.foco(P, PREV),
      'uso': lambda: sec.uso(P, PREV)}[seccion]()
-    r.html(f'<p class="dact">Datos al cierre de la semana {P["s_fin"]}</p>')
+    r.html(f'<p class="dact">Datos al cierre de la semana {P["s_fin"]}{_antiguedad(P)}</p>')
+
+
+def _antiguedad(P):
+    """' · leídos hace 12 min', para saber si vale la pena tocar Actualizar."""
+    try:
+        minutos = int((pd.Timestamp.now(tz='UTC') - pd.Timestamp(P['leido'])).total_seconds() // 60)
+    except Exception:
+        return ''
+    if minutos < 1:
+        return ' · leídos hace un momento'
+    return f" · leídos hace {minutos} min" if minutos < 60 else f" · leídos hace {minutos // 60} h"

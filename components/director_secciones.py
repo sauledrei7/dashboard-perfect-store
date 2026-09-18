@@ -13,7 +13,7 @@ Dos cuidados que no se ven:
 import html as _html
 import streamlit as st
 import render as r
-from data import get_tablero_director, get_uso_director
+from data import get_tablero_director, get_uso_director, get_conteo_incidencias_director
 
 AREA_COLORES = ['#FF6FA8', '#4F7BE8', '#1F2A5C', '#A9B6E6', '#C56FA0', '#2D8A4E']
 
@@ -466,6 +466,12 @@ def supervisores(P, PREV):
 # 4. FOCO OOS
 # ============================================================
 def foco(P, PREV):
+    # v20.1: el tablero se guarda 1 hora, pero las incidencias cambian todo el
+    # día; se leen aparte (2 minutos) y se pegan aquí.
+    conteo = get_conteo_incidencias_director(P['id'])
+    P = dict(P, promotores=[dict(x, inc_nr=int(conteo['nr'].get(x['ruta'], 0)),
+                                 inc_oos=int(conteo['oos'].get(x['ruta'], 0)))
+                            for x in P['promotores']])
     n = P['nacional']
     pv = PREV['nacional'] if PREV else {}
     r.html('<div class="dg dg4">'
