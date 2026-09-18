@@ -111,17 +111,42 @@ def mapa_areas(kp_reciente: pd.DataFrame):
     return ruta_area, sup_area
 
 
-def preparar_respuestas(orr: pd.DataFrame, ruta_area: dict) -> pd.DataFrame:
-    """oos_respuestas con su grupo de motivo y su área ya puestos."""
+def preparar_respuestas(orr: pd.DataFrame, ruta_area: dict, orden_periodos=None) -> pd.DataFrame:
+    """oos_respuestas con su grupo de motivo, su área y la posición de su periodo.
+
+    orden_periodos: los periodo_id del más viejo al más nuevo. La semana TRAX
+    vuelve a 1 cada año; con la posición del periodo las semanas se ordenan
+    bien aunque la ventana cruce de diciembre a enero.
+    """
     if len(orr) == 0:
-        return pd.DataFrame(columns=['ruta', 'periodo_id', 'semana', 'motivo', 'veces', 'g', 'sub', 'area'])
+        return pd.DataFrame(columns=['ruta', 'periodo_id', 'semana', 'motivo', 'veces', 'g', 'sub', 'area', 'pos'])
     o = orr.copy()
     o['veces'] = _col(o, 'veces').astype(int)
     o['semana'] = _col(o, 'semana').astype(int)
     o['g'] = o['motivo'].map(grupo_motivo)
     o['sub'] = np.where(o['g'] == 'nr', o['motivo'].map(sub_motivo_nr), '')
     o['area'] = o['ruta'].map(ruta_area)
+    if orden_periodos:
+        o['pos'] = o['periodo_id'].map({pid: i for i, pid in enumerate(orden_periodos)}).fillna(-1).astype(int)
+    else:
+        # Sin orden explícito: dentro de un mismo año, el periodo con semanas más bajas va primero.
+        rango = o.groupby('periodo_id')['semana'].min().rank(method='dense').astype(int)
+        o['pos'] = o['periodo_id'].map(rango)
     return o
+
+
+def ventana_semanas(orr: pd.DataFrame, periodo_id: str, s_fin: int, n: int = SEMANAS_REINCIDENCIA) -> pd.DataFrame:
+    """Las respuestas de las últimas n semanas que terminan en s_fin del periodo."""
+    if len(orr) == 0:
+        return orr
+    actual = orr.loc[orr['periodo_id'] == periodo_id, 'pos']
+    if len(actual) == 0:
+        return orr.iloc[0:0]
+    pos = int(actual.iloc[0])
+    llaves = orr[['pos', 'semana']].drop_duplicates()
+    llaves = llaves[(llaves['pos'] < pos) | ((llaves['pos'] == pos) & (llaves['semana'] <= s_fin))]
+    llaves = llaves.sort_values(['pos', 'semana']).tail(n)
+    return orr.merge(llaves, on=['pos', 'semana'], how='inner')
 
 
 # ------------------------------------------------------------
@@ -188,6 +213,63 @@ def indicadores(kp: pd.DataFrame, rt: pd.DataFrame, orr: pd.DataFrame, ks: pd.Da
     return out
 
 
+def indicadores_supervisores(kp: pd.DataFrame, rt: pd.DataFrame, orr: pd.DataFrame) -> dict:
+    """Lo mismo que indicadores() para cada supervisor, pero de un jalón.
+
+    v20.1: llamar indicadores() 30 veces (una por supervisor, filtrando las
+    tablas cada vez) era lo más lento del tablero. Aquí se agrupa una sola vez.
+    Solo trae lo que se pinta de un supervisor; las reglas son idénticas a las
+    de indicadores(), y la prueba lo compara contra ella campo por campo.
+    orr ya debe traer la columna 'supervisor'.
+    """
+    if len(kp) == 0:
+        return {}
+    k = kp.assign(_cap=_col(kp, 'tiendas_capturadas'), _eleg=_col(kp, 'tiendas_elegibles'),
+                  _cobra=(_es(kp, 'candado_abierto') & (_col(kp, 'pct_ps_ruta') >= 1)).astype(int))
+    g = k.groupby('supervisor')
+    base = pd.DataFrame({'rutas': g.size(), 'cap': g['_cap'].sum(), 'eleg': g['_eleg'].sum(),
+                         'cobran': g['_cobra'].sum()})
+
+    t = rt.assign(supervisor=rt['ruta'].map(kp.set_index('ruta')['supervisor']))
+    visitada = _es(t, 'tienda_visitada')
+    t = t.assign(_vis=visitada.astype(int), _ps=(_es(t, 'es_ps') & visitada).astype(int))
+    visitadas = t.groupby('supervisor')['_vis'].sum()
+    ps_reales = t.groupby('supervisor')['_ps'].sum()
+    vis = t[visitada]
+
+    def en_objetivo(real, objetivo):
+        con_obj = _col(vis, objetivo, np.nan) > 0
+        cumple = (_col(vis, real, 0) >= _col(vis, objetivo)).astype(float)
+        return cumple[con_obj].groupby(vis.loc[con_obj, 'supervisor']).mean() * 100
+
+    sos = {c: en_objetivo(real, obj) for c, real, obj in [('sos_w', 'sos_whisky', 'obj_whisky'),
+                                                          ('sos_t', 'sos_tequila', 'obj_tequila'),
+                                                          ('sos_v', 'sos_vodka', 'obj_vodka')]}
+    exh = _col(vis, 'cumplio_4').groupby(vis['supervisor']).mean() * 100
+    if len(orr):
+        respuestas = orr.groupby('supervisor')['veces'].sum()
+        no_rec = orr[orr['g'] == 'nr'].groupby('supervisor')['veces'].sum()
+    else:
+        respuestas = no_rec = pd.Series(dtype=float)
+
+    out = {}
+    for sup, b in base.iterrows():
+        resp = respuestas.get(sup, 0)
+        out[sup] = {
+            'rutas': int(b['rutas']),
+            'capturadas': int(b['cap']),
+            'captura': _n(_pct(b['cap'], b['eleg'])),
+            'cobran': int(b['cobran']),
+            'ps_real': _n(_pct(ps_reales.get(sup, 0), visitadas.get(sup, 0))),
+            'sos_w': _n(sos['sos_w'].get(sup, np.nan)),
+            'sos_t': _n(sos['sos_t'].get(sup, np.nan)),
+            'sos_v': _n(sos['sos_v'].get(sup, np.nan)),
+            'exh': _n(exh.get(sup, np.nan)),
+            'nr': _n(_pct(no_rec.get(sup, 0), resp)) if resp else None,
+        }
+    return out
+
+
 # ------------------------------------------------------------
 # Un periodo completo
 # ------------------------------------------------------------
@@ -228,12 +310,9 @@ def tablero_periodo(periodo: dict, kp, ks, rt, orr_todas, ruta_area, sup_area,
 
     sup_de_ruta = kp.set_index('ruta')['supervisor'].to_dict()
     orr_sup = orr.assign(supervisor=orr['ruta'].map(sup_de_ruta))
+    calculados = indicadores_supervisores(kp, rt, orr_sup)
     for _, s in ks.iterrows():
-        rutas = kp[kp['supervisor'] == s['supervisor']]
-        k = indicadores(rutas, rt[rt['ruta'].isin(rutas['ruta'])],
-                        orr_sup[orr_sup['supervisor'] == s['supervisor']])
-        if k is None:
-            k = {}
+        k = dict(calculados.get(s['supervisor'], {}))
         # Los números "oficiales" del supervisor salen de su propia fila,
         # que es de donde sale su bono.
         k.update({
@@ -255,13 +334,37 @@ def tablero_periodo(periodo: dict, kp, ks, rt, orr_todas, ruta_area, sup_area,
         # en rutas_a_cargo, y la tarjeta diría "7 de 10 cobran" con 11 rutas.
         P['supervisores'].append(k)
 
-    P['promotores'], P['prom_nr'] = foco_promotores(kp, orr, orr_todas, s_fin, incidencias)
+    ventana = ventana_semanas(orr_todas, pid, s_fin)
+    P['promotores'], P['prom_nr'] = foco_promotores(kp, orr, ventana, incidencias)
+    P['semanal'] = mezcla_semanal(ventana)
     P['rojos_nr'] = sum(1 for x in P['promotores'] if x['semaforo'] == 'ROJO')
     P['rutas_sc'] = sum(1 for x in P['promotores'] if x['no_cont'] > 0)
     return P
 
 
-def foco_promotores(kp, orr, orr_todas, s_fin, incidencias=None):
+def resumen_ligero(periodo: dict, kp, rt, ruta_area) -> dict:
+    """Solo el país y las áreas, para la gráfica de tendencia de Inicio.
+
+    Es lo que se calcula de los meses que no se están viendo: sin los 30
+    supervisores ni los 278 promotores, que son la parte cara del tablero.
+    """
+    s_ini, s_fin = int(periodo['semana_inicio']), int(periodo['semana_fin'])
+    kp = kp.copy()
+    rt = rt.copy()
+    kp['area'] = kp['ruta'].map(ruta_area).fillna(kp.get('area_manager'))
+    rt['area'] = rt['ruta'].map(ruta_area)
+    vacio = preparar_respuestas(pd.DataFrame(), ruta_area)
+    areas = sorted(a for a in kp['area'].dropna().unique())
+    return {
+        'id': periodo['periodo_id'],
+        'nombre': str(periodo.get('mes') or periodo['periodo_id']).capitalize(),
+        's_ini': s_ini, 's_fin': s_fin, 'semanas': s_fin - s_ini + 1,
+        'nacional': indicadores(kp, rt, vacio),
+        'areas': {a: indicadores(kp[kp['area'] == a], rt[rt['area'] == a], vacio) for a in areas},
+    }
+
+
+def foco_promotores(kp, orr, ventana, incidencias=None):
     """Una fila por promotor para las dos tablas del Foco OOS.
     Regresa (lista, promedio de no reconocido del equipo)."""
     if len(kp) == 0:
@@ -281,19 +384,18 @@ def foco_promotores(kp, orr, orr_todas, s_fin, incidencias=None):
     prom_nr = _pct(pr['nr'].sum(), pr['tot'].sum()) if len(pr) and pr['tot'].sum() else np.nan
 
     # --- reincidencia en las últimas semanas ---
-    ventana = orr_todas[(orr_todas['semana'] <= s_fin) &
-                        (orr_todas['semana'] > s_fin - SEMANAS_REINCIDENCIA)]
     sem_arriba, sem_eval, sem_sc = {}, {}, {}
     if len(ventana):
-        w = ventana.pivot_table(index=['ruta', 'semana'], columns='g', values='veces',
+        w = ventana.pivot_table(index=['ruta', 'pos', 'semana'], columns='g', values='veces',
                                 aggfunc='sum', fill_value=0)
         for g in GRUPOS_MOTIVO:
             if g not in w.columns:
                 w[g] = 0
         w['tot'] = w[list(GRUPOS_MOTIVO)].sum(axis=1)
-        semana_idx = w.index.get_level_values('semana')
-        prom_sem = w['nr'].groupby(level='semana').sum() / w['tot'].groupby(level='semana').sum()
-        w['arriba'] = (w['nr'] / w['tot'].replace(0, np.nan)) > semana_idx.map(prom_sem)
+        llave = pd.MultiIndex.from_arrays([w.index.get_level_values('pos'), w.index.get_level_values('semana')])
+        prom_sem = (w['nr'].groupby(level=['pos', 'semana']).sum() /
+                    w['tot'].groupby(level=['pos', 'semana']).sum())
+        w['arriba'] = (w['nr'] / w['tot'].replace(0, np.nan)).values > prom_sem.reindex(llave).values
         sem_arriba = w['arriba'].groupby(level='ruta').sum().astype(int).to_dict()
         sem_eval = w['arriba'].groupby(level='ruta').size().astype(int).to_dict()
         sem_sc = (w['sc'] > 0).groupby(level='ruta').sum().astype(int).to_dict()
@@ -342,14 +444,13 @@ def foco_promotores(kp, orr, orr_todas, s_fin, incidencias=None):
     return filas, _n(prom_nr)
 
 
-def mezcla_semanal(orr_todas: pd.DataFrame, s_fin: int, n_semanas: int = SEMANAS_REINCIDENCIA):
-    """Qué se contestó cada semana (las últimas n hasta s_fin), por grupo."""
-    v = orr_todas[(orr_todas['semana'] <= s_fin) & (orr_todas['semana'] > s_fin - n_semanas)]
-    if len(v) == 0:
+def mezcla_semanal(ventana: pd.DataFrame):
+    """Qué se contestó cada semana de la ventana, por grupo de motivo."""
+    if len(ventana) == 0:
         return []
-    w = v.pivot_table(index='semana', columns='g', values='veces', aggfunc='sum', fill_value=0)
+    w = ventana.pivot_table(index=['pos', 'semana'], columns='g', values='veces', aggfunc='sum', fill_value=0)
     filas = []
-    for semana, x in w.sort_index().iterrows():
+    for (_, semana), x in w.sort_index().iterrows():
         fila = {'semana': int(semana)}
         fila.update({g: int(x.get(g, 0)) for g in GRUPOS_MOTIVO})
         filas.append(fila)
