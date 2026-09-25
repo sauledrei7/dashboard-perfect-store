@@ -400,14 +400,29 @@ import uuid as _uuid
 from datetime import datetime as _dt
 
 
-def _comprimir_foto(file_bytes: bytes, max_lado: int = 1280, calidad: int = 72) -> bytes:
+def comprimir_foto(file_bytes: bytes, max_lado: int = 1280, calidad: int = 72) -> bytes:
     """Comprime y redimensiona una foto para subirla ligera (celular con datos móviles).
-    Devuelve JPEG. Si Pillow no está o falla, devuelve los bytes originales."""
+    Devuelve JPEG. Si Pillow no está o falla, devuelve los bytes originales.
+
+    v22: se llama al AGREGAR la foto al formulario, no solo al guardar, para que
+    la sesión no cargue fotos de 10 MB. Si la foto ya viene como JPG del tamaño
+    final y derecha (la galería nueva la manda así desde el celular), se deja
+    igual para no comprimirla dos veces."""
     try:
         from PIL import Image, ImageOps
         img = Image.open(io.BytesIO(file_bytes))
+        if (img.format == 'JPEG' and max(img.size) <= max_lado and len(file_bytes) <= 600_000
+                and img.getexif().get(0x0112, 1) == 1):
+            return file_bytes
+        if img.format == 'JPEG':
+            img.draft('RGB', (max_lado, max_lado))   # la decodifica ya reducida: rápido y sin memoria de más
         img = ImageOps.exif_transpose(img)          # respeta orientación del celular
-        if img.mode in ('RGBA', 'P'):
+        if img.mode in ('RGBA', 'LA', 'P'):
+            rgba = img.convert('RGBA')              # lo transparente queda blanco, no negro
+            fondo = Image.new('RGB', rgba.size, (255, 255, 255))
+            fondo.paste(rgba, mask=rgba.split()[-1])
+            img = fondo
+        elif img.mode != 'RGB':
             img = img.convert('RGB')
         img.thumbnail((max_lado, max_lado))          # mantiene proporción
         out = io.BytesIO()
@@ -418,11 +433,14 @@ def _comprimir_foto(file_bytes: bytes, max_lado: int = 1280, calidad: int = 72) 
         return file_bytes
 
 
+_comprimir_foto = comprimir_foto   # el nombre de antes, por si algo lo sigue llamando así
+
+
 def subir_foto_incidencia(file_bytes: bytes, ruta: str, curt: str) -> str:
     """Comprime y sube una foto al bucket PÚBLICO 'incidencias'.
     Devuelve la URL pública permanente (clicable en el CSV)."""
     sb = _get_client()
-    comprimida = _comprimir_foto(file_bytes)
+    comprimida = comprimir_foto(file_bytes)
     stamp = _dt.now().strftime('%Y%m%d_%H%M%S')
     nombre = f"{ruta}/{curt}_{stamp}_{_uuid.uuid4().hex[:8]}.jpg"
     sb.storage.from_('incidencias').upload(
