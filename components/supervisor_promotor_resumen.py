@@ -14,9 +14,11 @@ Muestra, en este orden:
 NOTA TÉCNICA: igual que en tienda_detalle.py, los bloques con loop se construyen
 concatenando strings de UNA línea y se mandan en un solo r.html().
 """
+import html
 import streamlit as st
 import render as r
 import pandas as pd
+from director_calc import nombre_corto
 from styles.theme import (
     COLOR_PINK_PALE, COLOR_PINK_TEXT, COLOR_PINK_BORDER, COLOR_PINK_TEXT_LIGHT,
     COLOR_BLUE_PRIMARY, COLOR_BLUE_DARK, COLOR_BLUE_PALE, COLOR_BLUE_BG,
@@ -41,18 +43,17 @@ def render(periodo_id: str, volver_a: str = 'lista_promotores'):
         return
 
     periodo_desc = get_periodo_descripcion(periodo_id)
+    kpis = adaptar_promotor(get_resumen_promotor(ruta, periodo_id))
 
     # ===== HEADER =====
     col1, col2 = st.columns([1, 5])
     with col1:
-        if st.button("← Volver", key="back_resumen_promo"):
-            st.session_state.pantalla = st.session_state.get('volver_de_resumen', volver_a)
-            st.rerun()
+        _boton_volver(volver_a, "back_resumen_promo")
     with col2:
         r.html(f"""
         <div>
             <p style="font-size:17px;font-weight:500;margin:0;color:{COLOR_NAVY};">{ruta}</p>
-            <p style="font-size:12px;color:{COLOR_TEXT_SECONDARY};margin:2px 0 0;">Así lo ve tu promotor · {periodo_desc}</p>
+            <p style="font-size:12px;color:{COLOR_TEXT_SECONDARY};margin:2px 0 0;">Así lo ve tu promotor · {periodo_desc}</p>{linea_jefe(kpis)}
         </div>
         """)
 
@@ -62,7 +63,6 @@ def render(periodo_id: str, volver_a: str = 'lista_promotores'):
     promotor_resumen.render({'identificador': ruta, 'nombre': ruta}, periodo_id, solo_lectura=True)
 
     # Si no hay KPIs, promotor_resumen ya mostró el vacío; no seguimos.
-    kpis = adaptar_promotor(get_resumen_promotor(ruta, periodo_id))
     if kpis is None:
         return
 
@@ -77,6 +77,36 @@ def render(periodo_id: str, volver_a: str = 'lista_promotores'):
     if st.button(f"Ver tiendas de {ruta} →", key="ver_tiendas_de_promo"):
         st.session_state.pantalla = 'tiendas_de_promotor'
         st.rerun()
+
+    # v21: otro Volver al pie, para no tener que subir toda la pantalla.
+    col_volver, _ = st.columns([1, 5])
+    with col_volver:
+        _boton_volver(volver_a, "back_resumen_promo_pie")
+
+
+def _boton_volver(volver_a, key):
+    if st.button("← Volver", key=key):
+        st.session_state.pantalla = st.session_state.get('volver_de_resumen', volver_a)
+        st.rerun()
+
+
+def linea_jefe(kpis) -> str:
+    """v21: a quién le reporta el promotor, para el AM y el director. Al bajar a
+    un promotor no había forma de saber su supervisor ni su gerencia sin regresar
+    varias pantallas. Al supervisor no se le pone: el jefe es él."""
+    if not kpis or (st.session_state.get('usuario') or {}).get('tipo') == 'supervisor':
+        return ''
+    correo, area = kpis.get('supervisor'), kpis.get('area_manager')
+    partes = []
+    if correo and pd.notna(correo):
+        partes.append(f'Supervisor <b style="color:{COLOR_NAVY};font-weight:500;" '
+                      f'title="{html.escape(str(correo))}">{html.escape(nombre_corto(correo))}</b>')
+    if area and pd.notna(area):
+        partes.append(html.escape(str(area)))
+    if not partes:
+        return ''
+    return (f'<p style="font-size:12px;color:{COLOR_TEXT_SECONDARY};margin:2px 0 0;">'
+            + ' · '.join(partes) + '</p>')
 
 
 # ============================================================
@@ -119,7 +149,10 @@ def _render_respuestas_oos(ruta, periodo_id, kpis):
     obj = int(kpis.get('OBJ_OOS', 0) or 0)
     no_cont = int(kpis.get('NO_CONT_OOS', 0) or 0)
     contestadas = max(0, obj - no_cont)
-    mult = float(kpis.get('MULT_OOS_PCT', 100) or 100)
+    # v23: un multiplicador de 0% (todas sin contestar) se veía como 100%,
+    # porque "0 or 100" da 100. Solo cuando no viene el dato se asume 100.
+    mult = kpis.get('MULT_OOS_PCT')
+    mult = 100.0 if mult is None or pd.isna(mult) else float(mult)
 
     if obj <= 0:
         return

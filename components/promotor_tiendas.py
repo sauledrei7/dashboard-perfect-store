@@ -13,6 +13,7 @@ from styles.theme import (
     COLOR_WHITE,
 )
 from data import get_tiendas_de_ruta, adaptar_tiendas, get_periodo_corto
+from components import cumplimiento
 
 
 def render(usuario: dict, periodo_id: str):
@@ -24,9 +25,7 @@ def render(usuario: dict, periodo_id: str):
     # Header con back button
     col1, col2 = st.columns([1, 5])
     with col1:
-        if st.button("← Volver", key="back_to_resumen"):
-            st.session_state.pantalla = 'resumen_promotor'
-            st.rerun()
+        _boton_volver("back_to_resumen")
     with col2:
         r.html(f"""
         <div>
@@ -40,6 +39,17 @@ def render(usuario: dict, periodo_id: str):
     # Lista de tiendas
     for _, t in tiendas.iterrows():
         _render_tarjeta_tienda(t)
+
+    # v21: otro Volver al pie, para no tener que subir toda la lista.
+    col_volver, _ = st.columns([1, 5])
+    with col_volver:
+        _boton_volver("back_to_resumen_pie")
+
+
+def _boton_volver(key):
+    if st.button("← Volver", key=key):
+        st.session_state.pantalla = 'resumen_promotor'
+        st.rerun()
 
 
 def _render_tarjeta_tienda(tienda):
@@ -95,6 +105,8 @@ def _render_tarjeta_tienda(tienda):
     if obj_v is not None and pd.isna(obj_v): obj_v = None
     if obj_e is not None and pd.isna(obj_e): obj_e = None
 
+    cumple = cumplimiento.categorias(tienda)
+
     border_color = COLOR_RED_BORDER if (visitada and not es_ps) else COLOR_BLUE_BORDER
     opacity = "0.85" if es_mayo_depto else "1"
 
@@ -108,7 +120,7 @@ def _render_tarjeta_tienda(tienda):
             </div>
             <span style="background:{estado_bg};color:{estado_color};font-size:12px;padding:3px 10px;border-radius:8px;font-weight:500;">{estado_texto}</span>
         </div>
-        {_render_mini_semaforos(sos_w, sos_t, sos_v, exh, obj_w, obj_t, obj_v, obj_e) if visitada else ''}
+        {_render_mini_semaforos(sos_w, sos_t, sos_v, exh, obj_w, obj_t, obj_v, obj_e, cumple) if visitada else ''}
     </div>
     """)
 
@@ -120,23 +132,28 @@ def _render_tarjeta_tienda(tienda):
         st.rerun()
 
 
-def _render_mini_semaforos(sos_w, sos_t, sos_v, exh, obj_w, obj_t, obj_v, obj_e):
+def _render_mini_semaforos(sos_w, sos_t, sos_v, exh, obj_w, obj_t, obj_v, obj_e, cumple):
     """4 cápsulas pequeñas con semáforos.
     Usa los objetivos REALES de la tienda (no valores fijos).
     SOS y objetivos llegan al componente en la misma escala (0-100),
-    así que la comparación es directa."""
-    def color(val, obj):
+    así que la comparación es directa.
+
+    v23: el verde lo decide el pipeline (cumple = components/cumplimiento.py),
+    no la resta. Antes una tienda que cumplía exhibiciones con lo que le
+    completan licor y ron, o un Walmart Express, salía en amarillo o rojo."""
+    def color(val, obj, ok):
+        if ok:
+            return COLOR_GREEN
         if obj is None or obj == 0:
             return COLOR_TEXT_SECONDARY  # gris si no hay objetivo
         pct = val / obj
-        if pct >= 1.0: return COLOR_GREEN
         if pct >= 0.80: return COLOR_AMBER
         return COLOR_RED
 
-    c_w = color(sos_w, obj_w)
-    c_t = color(sos_t, obj_t)
-    c_v = color(sos_v, obj_v)
-    c_e = color(exh, obj_e)   # EXH también es comparación directa (puntos vs puntos)
+    c_w = color(sos_w, obj_w, cumple['Whisky'])
+    c_t = color(sos_t, obj_t, cumple['Tequila'])
+    c_v = color(sos_v, obj_v, cumple['Vodka'])
+    c_e = color(exh, obj_e, cumple['EXH'])
 
     return f"""
     <div style="display:flex;gap:6px;padding-top:10px;border-top:0.5px solid {COLOR_BLUE_BORDER};">

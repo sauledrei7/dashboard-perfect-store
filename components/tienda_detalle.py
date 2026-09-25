@@ -16,6 +16,7 @@ from styles.theme import (
     COLOR_AMBER, COLOR_AMBER_PALE, COLOR_RED_DARK, COLOR_RED_PALE, COLOR_WHITE,
 )
 from data import get_detalle_tienda, get_tienda_info, adaptar_detalle, adaptar_tiendas, get_resumen_promotor, adaptar_promotor, get_oos_tienda, get_oos_tienda_semana
+from components import cumplimiento
 
 
 def render(periodo_id: str):
@@ -36,10 +37,7 @@ def render(periodo_id: str):
     # Header
     col1, col2 = st.columns([1, 5])
     with col1:
-        if st.button("← Volver", key="back_to_tiendas_2"):
-            origen = st.session_state.get('volver_a', 'tiendas_promotor')
-            st.session_state.pantalla = origen
-            st.rerun()
+        _boton_volver("back_to_tiendas_2")
     with col2:
         st.caption("Detalle de tienda")
 
@@ -56,10 +54,15 @@ def render(periodo_id: str):
     }
     canal = canal_map.get(str(canal_raw).upper().strip(), str(canal_raw).title())
     es_ps = info.get('PS FINAL') == 1
-    carita = "😄" if es_ps else "😞"
-    estado_bg = COLOR_GREEN_PALE if es_ps else COLOR_RED_PALE
-    estado_color = COLOR_GREEN_TEXT if es_ps else COLOR_RED_DARK
-    estado_texto = "Es PS" if es_ps else "No PS"
+    if info.get('Tienda Visitada') != 1:
+        # v23: igual que en la lista de tiendas. Sin visita todavía no hay datos;
+        # antes decía "No PS" aquí y "Sin datos" en la lista.
+        carita, estado_bg, estado_color, estado_texto = "😶", "#F4F7FE", COLOR_TEXT_SECONDARY, "Sin datos"
+    else:
+        carita = "😄" if es_ps else "😞"
+        estado_bg = COLOR_GREEN_PALE if es_ps else COLOR_RED_PALE
+        estado_color = COLOR_GREEN_TEXT if es_ps else COLOR_RED_DARK
+        estado_texto = "Es PS" if es_ps else "No PS"
 
     header = (
         f'<div style="background:linear-gradient(135deg,{COLOR_PINK_PALE} 0%,{COLOR_BLUE_PALE} 100%);'
@@ -98,11 +101,11 @@ def render(periodo_id: str):
     obj_v = _get_obj('Objetivo Vodka')
     obj_e = _get_obj('Objetivo Puntos HS')
     
-    # Si vienen en escala 0-1, multiplicar por 100. Si en 0-100, dejar igual.
-    if obj_w is not None and obj_w <= 1.5: obj_w *= 100
-    if obj_t is not None and obj_t <= 1.5: obj_t *= 100
-    if obj_v is not None and obj_v <= 1.5: obj_v *= 100
-    
+    # v23: los objetivos SOS llegan en escala 0-100 (así vienen en todos los
+    # meses) y se usan tal cual, igual que en la lista de tiendas. Antes, uno
+    # de 1.5 o menos se multiplicaba por 100 "por si venía en 0-1": el 1.18% de
+    # tequila de la 1118 salía como 118% y la tienda en rojo aunque cumplía.
+
     # Detectar si es bonus (Mayoreo/Departamental)
     canal_actual = info.get('CANAL', info.get('Canal', '')).upper().strip() if info else ''
     es_bonus = canal_actual in ('MAYORISTAS', 'DEPARTAMENTALES')
@@ -124,15 +127,39 @@ def render(periodo_id: str):
         </div>
         """)
     
+    # v23: el promedio y la carita de cada tarjeta son los del mes que calculó
+    # el pipeline, los mismos del bono. Antes se volvían a sacar de las semanas
+    # y no siempre coincidían (ver components/cumplimiento.py).
+    cumple = cumplimiento.categorias(info)
+
+    def _mes(col, escala=1):
+        v = info.get(col)
+        return None if v is None or pd.isna(v) else float(v) * escala
+
+    def _sos(col, titulo, cat, obj):
+        mes = _mes(col, 100)
+        if cumple[cat] and (obj is None or obj <= 0):
+            nota = 'Se dio por cumplida con una incidencia aprobada.'
+        elif not cumple[cat] and mes is not None and obj and mes >= obj - 1e-9:
+            nota = 'Empata con el objetivo a 2 decimales, pero con todos sus decimales queda abajo.'
+        else:
+            nota = ''
+        _render_kpi(detalle, semanas, col, titulo, obj, es_pct=True, mes=mes, cumple=cumple[cat], nota=nota)
+
+    def _exh():
+        _render_kpi(detalle, semanas, 'Puntos Promedio Exhibición', "EXH", obj_e, es_pct=False,
+                    mes=_mes('Puntos Promedio Exhibición'), cumple=cumple['EXH'],
+                    nota=cumplimiento.nota_exh(info))
+
     # Renderizar KPIs (cada uno se autoexcluye si su objetivo es None)
     if not (obj_w is None and obj_t is None and obj_v is None):
-        _render_kpi(detalle, semanas, 'Total Whisky', "SOS Whisky", obj_w, es_pct=True)
-        _render_kpi(detalle, semanas, 'Total tequila', "SOS Tequila", obj_t, es_pct=True)
-        _render_kpi(detalle, semanas, 'Total vodka', "SOS Vodka", obj_v, es_pct=True)
-        _render_kpi(detalle, semanas, 'Puntos Promedio Exhibición', "EXH", obj_e, es_pct=False)
+        _sos('Total Whisky', "SOS Whisky", 'Whisky', obj_w)
+        _sos('Total tequila', "SOS Tequila", 'Tequila', obj_t)
+        _sos('Total vodka', "SOS Vodka", 'Vodka', obj_v)
+        _exh()
     elif obj_e is not None:
         # Sin SOS pero con EXH: mostrar solo EXH
-        _render_kpi(detalle, semanas, 'Puntos Promedio Exhibición', "EXH", obj_e, es_pct=False)
+        _exh()
 
     _render_tabla_exh(detalle, semanas)
     _render_visitas(detalle, semanas, periodo_id)
@@ -152,9 +179,26 @@ def render(periodo_id: str):
     from components import incidencias as _inc
     _inc.render_seccion(curt, periodo_id, info)
 
+    # v21: otro Volver al pie, para no tener que subir toda la pantalla.
+    st.write("")
+    col_volver, _ = st.columns([1, 5])
+    with col_volver:
+        _boton_volver("back_to_tiendas_2_pie")
 
-def _render_kpi(detalle, semanas, columna, titulo, objetivo, es_pct=True):
-    """Tarjeta con valores por semana + promedio."""
+
+def _boton_volver(key):
+    if st.button("← Volver", key=key):
+        st.session_state.pantalla = st.session_state.get('volver_a', 'tiendas_promotor')
+        st.rerun()
+
+
+def _render_kpi(detalle, semanas, columna, titulo, objetivo, es_pct=True, mes=None, cumple=None, nota=''):
+    """Tarjeta con valores por semana + promedio.
+
+    v23: mes = el valor del mes que guardó el pipeline y cumple = si la
+    categoría cumple para el bono (components/cumplimiento.py). Con ellos van
+    el promedio y la carita. Los cuadritos de exhibiciones se pintan con el
+    CUMPLIO 4 de su semana, que ya trae lo que completan licor y ron."""
     if columna not in detalle.columns:
         return
     
@@ -168,32 +212,37 @@ def _render_kpi(detalle, semanas, columna, titulo, objetivo, es_pct=True):
     except (ValueError, TypeError):
         return
 
-    valores = []
+    valores, cumple_sem = [], []
     for s in semanas:
         fila = detalle[detalle['Semana'] == s]
         if len(fila) == 0:
             valores.append(None)
+            cumple_sem.append(None)
             continue
         v = fila.iloc[0][columna]
         inc = fila.iloc[0].get('Incidencia', 0) == 1
         if inc or pd.isna(v):
             valores.append(None)
+            cumple_sem.append(None)
         else:
             valores.append(float(v) * 100 if es_pct else float(v))
+            c4 = fila.iloc[0].get('CUMPLIO 4')
+            cumple_sem.append(None if es_pct or c4 is None or pd.isna(c4) else int(c4) == 1)
 
     validos = [v for v in valores if v is not None]
     if not validos:
         return
-    prom = sum(validos) / len(validos)
+    prom = mes if mes is not None else sum(validos) / len(validos)
 
     # Si el objetivo es 0, la tienda no tiene meta cargada para esta categoría:
     # mostramos los valores en gris con carita neutra (no podemos juzgar cumplimiento).
     sin_objetivo = (objetivo == 0)
+    ok = cumple if cumple is not None else (not sin_objetivo and prom >= objetivo)
 
-    if sin_objetivo:
-        emoji = "😐"
-    elif prom >= objetivo:
+    if ok:
         emoji = "😄"
+    elif sin_objetivo:
+        emoji = "😐"
     elif prom >= objetivo * 0.85:
         emoji = "😐"
     else:
@@ -201,7 +250,7 @@ def _render_kpi(detalle, semanas, columna, titulo, objetivo, es_pct=True):
 
     # Construir cuadritos como UNA SOLA STRING
     cuadros = ""
-    for s, v in zip(semanas, valores):
+    for s, v, c_sem in zip(semanas, valores, cumple_sem):
         if v is None:
             cuadros += (
                 f'<div style="text-align:center;">'
@@ -221,8 +270,8 @@ def _render_kpi(detalle, semanas, columna, titulo, objetivo, es_pct=True):
                 f'</div></div>'
             )
         else:
-            cumple = v >= objetivo
-            if cumple:
+            cumple_s = c_sem if c_sem is not None else v >= objetivo - 1e-9
+            if cumple_s:
                 bg, text_c = COLOR_GREEN_PALE, COLOR_GREEN_TEXT
             elif v >= objetivo * 0.85:
                 bg, text_c = COLOR_AMBER_PALE, COLOR_AMBER
@@ -237,7 +286,8 @@ def _render_kpi(detalle, semanas, columna, titulo, objetivo, es_pct=True):
                 f'</div></div>'
             )
 
-    prom_txt = f"{prom:.1f}%" if es_pct else f"{prom:.1f}"
+    # 2 decimales, como el Excel y los CSV: con 1 se veían empates que no eran.
+    prom_txt = f"{prom:.2f}%" if es_pct else f"{prom:.2f}"
     if sin_objetivo:
         obj_txt = "sin objetivo asignado"
     else:
@@ -263,7 +313,9 @@ def _render_kpi(detalle, semanas, columna, titulo, objetivo, es_pct=True):
         f'</div>'
         f'<span style="font-size:22px;">{emoji}</span>'
         f'</div>'
-        f'</div>'
+        + (f'<p style="font-size:11px;color:{COLOR_TEXT_SECONDARY};margin:8px 0 0;line-height:1.4;">{nota}</p>'
+           if nota else '')
+        + f'</div>'
     )
     r.html(tarjeta)
 

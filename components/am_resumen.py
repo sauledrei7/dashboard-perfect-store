@@ -220,9 +220,12 @@ def _render_alertas_supervisores(am, periodo_id):
     df = get_supervisores_de_am(am, periodo_id)
     if len(df) == 0:
         return
-    alertas = df[df['candado_abierto'] == False].head(5)
+    cerrados = df[df['candado_abierto'] == False]
+    alertas = cerrados.head(5)
     if len(alertas) == 0:
         return
+    # v23: el título dice cuántos son en total; la lista sigue mostrando 5.
+    mas = len(cerrados) - len(alertas)
     items = ""
     for _, s in alertas.iterrows():
         nombre = s.get('ejecutivo') or s['supervisor']
@@ -238,8 +241,10 @@ def _render_alertas_supervisores(am, periodo_id):
         f'<div style="background:{COLOR_RED_PALE};border:0.5px solid {COLOR_RED_BORDER};border-radius:12px;padding:14px;margin-bottom:12px;">'
         f'<div style="display:flex;align-items:center;gap:8px;margin-bottom:8px;">'
         f'<span style="font-size:18px;">⚠️</span>'
-        f'<p style="font-size:13px;font-weight:500;color:{COLOR_RED_DARK};margin:0;">Supervisores en riesgo ({len(alertas)})</p>'
+        f'<p style="font-size:13px;font-weight:500;color:{COLOR_RED_DARK};margin:0;">Supervisores en riesgo ({len(cerrados)})</p>'
         f'</div>'
         f'{items}'
-        f'</div>'
+        + (f'<p style="font-size:11px;color:{COLOR_RED_DARK};margin:6px 2px 0;">Y {mas} más con candado cerrado: están en tu lista de supervisores.</p>'
+           if mas > 0 else '')
+        + f'</div>'
     )

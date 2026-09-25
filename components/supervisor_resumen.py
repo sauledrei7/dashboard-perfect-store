@@ -19,6 +19,7 @@ from data import (
     get_promotores_cerca_80, get_mejor_y_peor_promotor,
     adaptar_supervisor, adaptar_promotor, get_periodo_descripcion,
 )
+from components.promotor_resumen import factor_ps, color_oos
 
 
 def render(usuario: dict, periodo_id: str):
@@ -73,7 +74,8 @@ def render(usuario: dict, periodo_id: str):
     """)
 
     # ===== HERO DEL BONO con leyenda 70% =====
-    _render_bono_supervisor_hero(bono_potencial, bono_final, pct_ps, mult_oos, candado)
+    _render_bono_supervisor_hero(bono_potencial, bono_final, pct_ps, mult_oos, candado,
+                                 resumen.get('PCT_PAGO', pct_ps))
 
     # ===== Leyenda del tope 70% =====
     r.html(f"""
@@ -128,8 +130,10 @@ def render(usuario: dict, periodo_id: str):
         st.rerun()
 
 
-def _render_bono_supervisor_hero(bono_potencial, bono_final, pct_ps, mult_oos, candado):
-    """Bono con efecto bloqueado si candado cerrado."""
+def _render_bono_supervisor_hero(bono_potencial, bono_final, pct_ps, mult_oos, candado, pct_pago):
+    """Bono con efecto bloqueado si candado cerrado.
+    v23: la cuenta lleva el pago, no el PS (ver promotor_resumen.factor_ps)."""
+    factor = factor_ps(pct_ps, pct_pago)
     if candado:
         emoji = "😄" if bono_final >= 60 else ("🙂" if bono_final >= 40 else "😐")
         msg = "¡Vas bien!" if bono_final >= 50 else "Puedes mejorar"
@@ -139,7 +143,7 @@ def _render_bono_supervisor_hero(bono_potencial, bono_final, pct_ps, mult_oos, c
             <p style="font-size:52px;font-weight:500;margin:0;line-height:1;">{bono_final:.0f}%</p>
             <div style="margin-top:10px;font-size:14px;">{emoji} {msg}</div>
             <div style="border-top:0.5px solid rgba(255,255,255,0.3);margin-top:14px;padding-top:12px;font-size:11px;opacity:0.9;">
-                PS {pct_ps:.0f}% × OOS {mult_oos:.0f}% × Tope 70% = {bono_final:.0f}%
+                {factor} × OOS {mult_oos:.0f}% × Tope 70% = {bono_final:.0f}%
             </div>
         </div>
         """)
@@ -150,7 +154,7 @@ def _render_bono_supervisor_hero(bono_potencial, bono_final, pct_ps, mult_oos, c
             <div style="position:relative;z-index:1;opacity:0.55;">
                 <p style="font-size:13px;opacity:0.95;margin:0 0 6px;">Tu bono potencial</p>
                 <p style="font-size:52px;font-weight:500;margin:0;line-height:1;">{bono_potencial:.0f}%</p>
-                <p style="font-size:11px;margin:8px 0 0;opacity:0.85;">PS {pct_ps:.0f}% × OOS {mult_oos:.0f}% × Tope 70%</p>
+                <p style="font-size:11px;margin:8px 0 0;opacity:0.85;">{factor} × OOS {mult_oos:.0f}% × Tope 70%</p>
             </div>
             <div style="position:relative;z-index:2;margin-top:14px;display:flex;align-items:center;justify-content:center;gap:6px;background:rgba(181,48,63,0.95);padding:8px 14px;border-radius:10px;">
                 <span style="font-size:18px;">🔒</span>
@@ -199,7 +203,7 @@ def _render_kpis_supervisor(resumen):
         r.html(f"""
         <div style="background:{COLOR_BLUE_PALE};border:0.5px solid {COLOR_BLUE_BORDER_DARK};border-radius:12px;padding:14px;text-align:center;margin-bottom:12px;">
             <p style="font-size:12px;color:{COLOR_BLUE_DARK};margin:0 0 4px;">Multiplicador OOS</p>
-            <p style="font-size:26px;font-weight:500;margin:4px 0;color:{COLOR_GREEN};">{resumen['MULT_OOS_PCT']:.0f}%</p>
+            <p style="font-size:26px;font-weight:500;margin:4px 0;color:{color_oos(resumen['MULT_OOS_PCT'])};">{resumen['MULT_OOS_PCT']:.0f}%</p>
             <p style="font-size:11px;color:{COLOR_TEXT_SECONDARY};margin:0;">{int(resumen['NO_CONT_OOS'])} sin contestar de {int(resumen['OBJ_OOS'])}</p>
         </div>
         """)
@@ -246,7 +250,11 @@ def _render_cerca_80(supervisor, periodo_id):
     for _, p in cerca.iterrows():
         ruta_corta = p['RUTA']
         pct_ps = p['PCT_PS_RUTA']
-        falta = max(1, int(p['TIENDAS_CAPTURADAS'] * 0.80) - int(p['PS_ELEGIBLES'] + p['PS_BONUS_MAYO_DEPTO']))
+        # v23: redondeando hacia arriba. Con 9 capturadas el 80% son 7.2, o
+        # sea 8 tiendas; antes se truncaba a 7 y decía que faltaba una menos.
+        # En enteros, para que 0.8 × 15 no dé 12.000000000000002 y suba a 13.
+        necesita = -(-4 * int(p['TIENDAS_CAPTURADAS']) // 5)
+        falta = max(1, necesita - int(p['PS_ELEGIBLES'] + p['PS_BONUS_MAYO_DEPTO']))
         items += (
             f'<div style="background:{COLOR_PINK_PALE};border-radius:10px;padding:10px 12px;margin-bottom:6px;display:flex;justify-content:space-between;align-items:center;">'
             f'<div style="flex:1;min-width:0;">'
@@ -273,12 +281,16 @@ def _render_alertas(supervisor, periodo_id):
     df_raw = get_promotores_de_supervisor(supervisor, periodo_id)
     if len(df_raw)==0:
         return
-    alertas_raw = df_raw[df_raw['candado_abierto']==False].head(5)
+    cerrados = df_raw[df_raw['candado_abierto']==False]
+    alertas_raw = cerrados.head(5)
     if len(alertas_raw)==0:
         return
     alertas = pd.DataFrame([adaptar_promotor(r) for _, r in alertas_raw.iterrows()])
     if len(alertas) == 0:
         return
+    # v23: el título dice cuántos son en total; la lista sigue mostrando 5.
+    # Antes decía "(5)" aunque fueran más.
+    mas = len(cerrados) - len(alertas)
     items = ""
     for _, p in alertas.iterrows():
         ruta = p['RUTA']
@@ -297,10 +309,12 @@ def _render_alertas(supervisor, periodo_id):
         f'<div style="background:{COLOR_RED_PALE};border:0.5px solid {COLOR_RED_BORDER};border-radius:12px;padding:14px;margin-bottom:12px;">'
         f'<div style="display:flex;align-items:center;gap:8px;margin-bottom:8px;">'
         f'<span style="font-size:18px;">⚠️</span>'
-        f'<p style="font-size:13px;font-weight:500;color:{COLOR_RED_DARK};margin:0;">Atención urgente ({len(alertas)})</p>'
+        f'<p style="font-size:13px;font-weight:500;color:{COLOR_RED_DARK};margin:0;">Atención urgente ({len(cerrados)})</p>'
         f'</div>'
         f'{items}'
-        f'</div>'
+        + (f'<p style="font-size:11px;color:{COLOR_RED_DARK};margin:6px 2px 0;">Y {mas} más con candado cerrado: están en tu lista de promotores.</p>'
+           if mas > 0 else '')
+        + f'</div>'
     )
     r.html(bloque)
 
