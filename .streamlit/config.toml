@@ -4,3 +4,9 @@
    backgroundColor = "#FFFFFF"
    secondaryBackgroundColor = "#FDF0F7"
    textColor = "#1F2A5C"
+
+[server]
+   # v22: cuánto aguanta la sesión mientras el celular está fuera de la app (en
+   # la galería, en TRAX o en WhatsApp). Streamlit trae 120 segundos; al pasarse,
+   # al volver se había perdido el formulario y las fotos.
+   disconnectedSessionTTL = 900
