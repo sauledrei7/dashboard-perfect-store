@@ -29,8 +29,9 @@ from styles.theme import (
 from data import (
     guardar_incidencia, subir_foto_incidencia, get_incidencias_de_tienda,
     get_detalle_tienda, adaptar_detalle, get_productos, get_oos_tienda,
-    get_borrador, guardar_borrador, borrar_borrador,
+    get_borrador, guardar_borrador, borrar_borrador, comprimir_foto,
 )
+from components import galeria
 
 # ============================================================
 # CATÁLOGOS  (deben coincidir con los CHECK de 02_incidencias_v13.sql)
@@ -516,6 +517,13 @@ def _guardar_borrador_si_cambio(curt, periodo_id, valores):
 #
 # st.camera_input abre la cámara DENTRO de la página. No sale del navegador,
 # así que la pestaña no se suspende y no se pierde nada.
+#
+# v22: la mayoría usa la galería, y era ahí donde fallaba. st.file_uploader
+# pedía archivos por extensión (en Android podía abrir el explorador de
+# archivos en vez de la galería), subía la foto original de 3 a 10 MB por datos
+# móviles y daba los errores en inglés. Ahora la galería es un componente
+# propio (components/galeria.py) que achica la foto en el mismo celular. El
+# file_uploader de antes se queda de repuesto dentro de un desplegable.
 # ============================================================
 MAX_FOTOS = 3
 
@@ -526,9 +534,13 @@ def _agregar_foto(acum, datos) -> bool:
     La huella hace falta porque los widgets devuelven la MISMA foto en cada
     corrida del script mientras no se limpien: sin ella, la foto entraría
     varias veces.
+
+    v22: la foto se comprime al agregarla y no hasta guardar, para que la
+    sesión no cargue fotos de 10 MB mientras el promotor llena lo demás.
     """
     if not datos or len(acum) >= MAX_FOTOS:
         return False
+    datos = comprimir_foto(datos)
     huella = hashlib.md5(datos).hexdigest()
     if any(h == huella for _n, _d, h in acum):
         return False
@@ -549,11 +561,18 @@ def _selector_fotos(curt):
     acum = st.session_state[acum_key]
 
     st.caption(f"Fotos: llevas {len(acum)} de {MAX_FOTOS} (mínimo 1)")
+    # Va arriba y no dentro de la galería: si con esa selección se llenaron las
+    # 3, la galería ya no se pinta y el aviso se perdería.
+    visto_key, aviso_key = f"inc_galeria_visto_{curt}", f"inc_galeria_aviso_{curt}"
+    if st.session_state.get(aviso_key):
+        st.warning(st.session_state[aviso_key])
 
     if len(acum) < MAX_FOTOS:
+        # v22: la galería va primero, y por lo tanto por default: es la que usa
+        # la mayoría y la que saca la foto completa del celular.
         modo = st.radio(
             "Cómo agregar la foto",
-            ["📸 Tomar ahora", "🖼️ De galería"],
+            ["🖼️ De galería", "📸 Tomar ahora"],
             key=f"inc_modofoto_{curt}", horizontal=True, label_visibility="collapsed",
         )
 
@@ -566,17 +585,31 @@ def _selector_fotos(curt):
             if tomada is not None and _agregar_foto(acum, tomada.getvalue()):
                 st.rerun()
         else:
-            st.caption("Ojo: al abrir la galería el celular puede cerrar la app "
-                       "y perderías lo que llevas. Si te pasa, usa \"Tomar ahora\".")
-            subidas = st.file_uploader(
-                "Fotos", type=['jpg', 'jpeg', 'png'], accept_multiple_files=True,
-                label_visibility="collapsed", key=f"inc_fotos_{curt}_{len(acum)}",
-            )
-            # Lista y no generador: any() cortaría al primer True y se
-            # quedarían fuera las demás fotos que hayan seleccionado.
-            agregadas = [_agregar_foto(acum, f.getvalue()) for f in (subidas or [])]
-            if any(agregadas):
+            st.caption("Se preparan en tu celular antes de subirlas, así pesan poco.")
+            sel_id, nuevas, aviso = galeria.elegir_fotos(key=f"inc_galeria_{curt}_{len(acum)}",
+                                                         max_fotos=MAX_FOTOS - len(acum),
+                                                         recibido=st.session_state.get(visto_key))
+            # El componente regresa la misma selección en cada corrida del
+            # script: el id evita sumarla dos veces antes de que cambie la llave.
+            if sel_id and sel_id != st.session_state.get(visto_key):
+                st.session_state[visto_key] = sel_id
+                st.session_state[aviso_key] = aviso
+                for datos in nuevas:
+                    _agregar_foto(acum, datos)
+                # Siempre se vuelve a correr: si entró alguna, para dejar el
+                # botón limpio; si no (eran repetidas), para que el componente
+                # reciba la confirmación, deje de reenviar y suelte las fotos.
                 st.rerun()
+            with st.expander("¿No se abre tu galería? Prueba aquí"):
+                st.caption("Es el cargador de antes. Si la foto no aparece a la primera, "
+                           "vuelve a elegirla.")
+                subidas = st.file_uploader(
+                    "Fotos", type=['jpg', 'jpeg', 'png'], accept_multiple_files=True,
+                    label_visibility="collapsed", key=f"inc_fotos_{curt}_{len(acum)}",
+                )
+                agregadas = [_agregar_foto(acum, f.getvalue()) for f in (subidas or [])]
+                if any(agregadas):
+                    st.rerun()
     else:
         st.caption("Ya tienes las 3. Quita una si quieres cambiarla.")
 
@@ -587,6 +620,7 @@ def _selector_fotos(curt):
                 st.image(datos, use_container_width=True)
                 if st.button("Quitar", key=f"inc_quitafoto_{curt}_{i}"):
                     acum.pop(i)
+                    st.session_state.pop(aviso_key, None)
                     st.rerun()
 
     return acum
@@ -596,6 +630,7 @@ def _limpiar_fotos(curt):
     """Vacía el montón de fotos. Se llama al cancelar y al guardar, para que la
     siguiente incidencia de esta tienda no arranque con las fotos de la pasada."""
     st.session_state.pop(f"inc_fotos_acum_{curt}", None)
+    st.session_state.pop(f"inc_galeria_aviso_{curt}", None)
 
 
 def _render_formulario(curt, periodo_id, info, ruta, abierto_key, permitidos=None):
