@@ -313,6 +313,9 @@ def tablero_periodo(periodo: dict, kp, ks, rt, orr_todas, ruta_area, sup_area,
     calculados = indicadores_supervisores(kp, rt, orr_sup)
     for _, s in ks.iterrows():
         k = dict(calculados.get(s['supervisor'], {}))
+        # v21: las encuestas sin contestar salen de la misma fila que su OOS,
+        # para que el conteo y el % de la tabla nunca se contradigan.
+        no_cont, obj_oos = _n(s.get('no_cont_oos'), 0), _n(s.get('obj_oos'), 0)
         # Los números "oficiales" del supervisor salen de su propia fila,
         # que es de donde sale su bono.
         k.update({
@@ -328,6 +331,8 @@ def tablero_periodo(periodo: dict, kp, ks, rt, orr_todas, ruta_area, sup_area,
             'candado': bool(s.get('candado_abierto')) if s.get('candado_abierto') is not None else False,
             'bono': _n(s.get('bono_final_pct')),
             'faltan': int(_n(s.get('visitas_faltantes_95'), 0) or 0),
+            'no_cont': None if no_cont is None else int(no_cont),
+            'obj_oos': None if obj_oos is None else int(obj_oos),
         })
         # 'rutas' se queda con las de kpis_promotor y no con rutas_a_cargo: una
         # ruta con tiendas repartidas entre dos supervisores cuenta en los dos

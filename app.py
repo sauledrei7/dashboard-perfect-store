@@ -349,29 +349,38 @@ def _render_tiendas_promotor_para_supervisor(usuario, periodo_id):
         return
 
     tiendas = adaptar_tiendas(get_tiendas_de_ruta(ruta_sel, periodo_id))
+    kpis = adaptar_promotor(get_resumen_promotor(ruta_sel, periodo_id))
 
     col1, col2 = st.columns([1, 5])
     with col1:
-        if st.button("← Volver", key="back_to_lista_promo"):
-            st.session_state.pantalla = st.session_state.get('volver_de_tiendas', 'lista_promotores')
-            st.rerun()
+        _volver_de_tiendas("back_to_lista_promo")
     with col2:
         r.html(f"""
         <div>
             <p style="font-size:17px;font-weight:500;margin:0;color:{COLOR_NAVY};">{ruta_sel}</p>
-            <p style="font-size:12px;color:{COLOR_TEXT_SECONDARY};margin:2px 0 0;">{len(tiendas)} tiendas</p>
+            <p style="font-size:12px;color:{COLOR_TEXT_SECONDARY};margin:2px 0 0;">{len(tiendas)} tiendas</p>{supervisor_promotor_resumen.linea_jefe(kpis)}
         </div>
         """)
 
     st.write("")
 
     # Tarjeta de resumen del bono del promotor (con bono potencial si candado cerrado)
-    kpis = adaptar_promotor(get_resumen_promotor(ruta_sel, periodo_id))
     if kpis:
         _render_bono_promotor_para_supervisor(kpis)
 
     for _, t in tiendas.iterrows():
         _render_tarjeta_tienda(t)
+
+    # v21: otro Volver al pie, para no tener que subir toda la lista.
+    col_volver, _ = st.columns([1, 5])
+    with col_volver:
+        _volver_de_tiendas("back_to_lista_promo_pie")
+
+
+def _volver_de_tiendas(key):
+    if st.button("← Volver", key=key):
+        st.session_state.pantalla = st.session_state.get('volver_de_tiendas', 'lista_promotores')
+        st.rerun()
 
 
 def _render_bono_promotor_para_supervisor(k):
