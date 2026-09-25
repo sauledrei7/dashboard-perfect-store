@@ -385,20 +385,34 @@ def areas(P, PREV):
         _abrir_supervisor(sups, 'area')
 
 
+def celda_sin_contestar(s) -> str:
+    """v21: cuántas encuestas de OOS dejó sin contestar todo su equipo. Lleva el
+    color de su OOS, que es de donde sale el %; el cero siempre va en verde."""
+    nc, obj = s.get('no_cont'), s.get('obj_oos')
+    if nc is None:
+        return '<span class="dp dp-n">—</span>'
+    clase = 'g' if nc == 0 else ('n' if s.get('oos') is None else SEM['oos'](s['oos']))
+    titulo = f' title="{f(nc)} de {f(obj)} encuestas con objetivo"' if obj else ''
+    return f'<span class="dp dp-{clase}"{titulo}>{f(nc)}</span>'
+
+
 def tabla_supervisores(lista, P, con_area=True) -> str:
     h = ('<table class="dtab"><tr><th class="drk-n"></th><th class="di">Supervisor</th><th>Rutas</th><th>PS real</th>'
          '<th>PS bono</th><th>OOS</th><th>Captura</th><th>Efect.</th><th>SOS W · T · V</th><th>Exh</th>'
-         '<th>No recon.</th><th>Candado</th><th>Cobro</th></tr>')
+         '<th>No recon.</th><th>Sin contestar</th><th>Candado</th><th>Cobro</th></tr>')
     for i, s in enumerate(lista, 1):
         candado = ('<span class="dt dt-g">🔓 Abierto</span>' if s['candado']
                    else f'<span class="dt dt-r">🔒 Faltan {s["faltan"]}</span>')
         sub = (f'{_e(s["area"])} · ' if con_area else '') + f'{s.get("cobran", 0)} de {s.get("rutas", 0)} promotores cobran'
-        h += (f'<tr><td class="drk-n">{i}</td><td class="di"><span class="dn1">{_e(s["sup"])}</span><span class="dn2">{sub}</span></td>'
+        # v21: el renglón de abajo puede partirse en dos. Con la columna de sin
+        # contestar, la tabla ya no cabía en una laptop y el cobro se escondía.
+        h += (f'<tr><td class="drk-n">{i}</td><td class="di"><span class="dn1">{_e(s["sup"])}</span>'
+              f'<span class="dn2" style="white-space:normal;">{sub}</span></td>'
               f'<td class="dnum">{s.get("rutas", 0)}</td><td>{pill(s.get("ps_real"), SEM["ps"])}</td>'
               f'<td>{pill(s["ps"], SEM["ps"])}</td><td>{pill(s["oos"], SEM["oos"], 1)}</td>'
               f'<td>{pill(s.get("captura"), SEM["captura"])}</td><td>{pill(s["efect"], SEM["efect"], 1)}</td>'
               f'<td>{_sos_triple(s)}</td><td>{pill(s.get("exh"), SEM["sos"])}</td>'
-              f'<td>{pill_nr(s.get("nr"), P["prom_nr"])}</td><td>{candado}</td>'
+              f'<td>{pill_nr(s.get("nr"), P["prom_nr"])}</td><td>{celda_sin_contestar(s)}</td><td>{candado}</td>'
               f'<td>{pill(s["bono"], SEM["bono_sup"])}</td></tr>')
     return h + '</table>'
 
@@ -413,12 +427,25 @@ def _abrir_vista_am(area, pantalla, **extra):
     st.rerun()
 
 
-def _abrir_supervisor(lista, contexto):
+def _valor_orden(s, campo) -> str:
+    v = s.get(campo)
+    if campo == 'no_cont':
+        return f(v)
+    return pct(v, 1 if campo in ('oos', 'efect', 'nr') else 0)
+
+
+def _abrir_supervisor(lista, contexto, campo='bono'):
+    """v21: el desplegable va de mayor a menor en la medida con la que se ordena
+    la tabla, y la enseña en cada renglón. La tabla, en cambio, pone primero a
+    los que más atención necesitan."""
     if not lista:
         return
+    nombre = next((n for n, c, _ in ORDENES.values() if c == campo), campo)
+    ordenados = sorted(lista, key=lambda s: (s.get(campo) is None, -(s.get(campo) or 0)))
     izq, der = st.columns([3, 1.2])
     with izq:
-        etiquetas = {s['supervisor']: f"{s['sup']} · {s['area']}" for s in lista}
+        etiquetas = {s['supervisor']: f"{s['sup']} · {s['area']} · {nombre} {_valor_orden(s, campo)}"
+                     for s in ordenados}
         elegido = st.selectbox("Abrir supervisor", list(etiquetas),
                                format_func=lambda sid: etiquetas.get(sid, str(sid)),
                                key=f"dir_abrir_sup_{contexto}", label_visibility='collapsed')
@@ -436,7 +463,7 @@ def _abrir_supervisor(lista, contexto):
 ORDENES = {
     'bono': ('Cobro', 'bono', 1), 'ps_real': ('PS real', 'ps_real', 1), 'ps': ('PS bono', 'ps', 1),
     'efect': ('Efectividad', 'efect', 1), 'captura': ('Captura', 'captura', 1), 'oos': ('OOS', 'oos', 1),
-    'nr': ('No reconocido', 'nr', -1),
+    'nr': ('No reconocido', 'nr', -1), 'sc': ('Sin contestar', 'no_cont', -1),
 }
 
 
@@ -459,7 +486,7 @@ def supervisores(P, PREV):
                  else 'todos con candado abierto')
         r.html(tarjeta_titulo(f'Los {len(lista)} supervisores {donde}', aviso)
                + f'<div class="dtw">{tabla_supervisores(lista, P)}</div>')
-        _abrir_supervisor(lista, 'lista')
+        _abrir_supervisor(lista, 'lista', campo)
 
 
 # ============================================================
