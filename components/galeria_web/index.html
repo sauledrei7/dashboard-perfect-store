@@ -1,0 +1,255 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Galería ATLAS</title>
+<!--
+  v22 — Selector de fotos de la galería para ATLAS.
+
+  Reemplaza a st.file_uploader en "De galería". Tres cosas que aquel hacía mal
+  en el celular y que aquí se resuelven:
+    1. Pedía archivos por extensión (.jpg/.jpeg/.png) más un tipo inventado,
+       así que en Android podía abrir el explorador de archivos en vez de la
+       galería, y rechazaba en inglés lo que no terminara en esas extensiones.
+       Aquí se pide accept="image/*": la galería de siempre.
+    2. Mandaba la foto ORIGINAL (3 a 10 MB) por datos móviles. Aquí se achica
+       en el mismo celular a 1280 px y se convierte a JPG antes de mandarla
+       (unos 300 KB).
+    3. Los errores salían en inglés. Aquí salen en español y dicen qué hacer.
+    4. Al volver de la galería el celular tarda en reconectarse, y el servidor
+       rechazaba la subida si llegaba en ese hueco ("Invalid session_id"): la
+       foto se perdía y había que elegirla otra vez. Aquí las fotos se reenvían
+       hasta que la app confirma que las recibió.
+
+  Habla con Streamlit con el protocolo de componentes (postMessage), sin
+  librerías: componentReady, setFrameHeight y setComponentValue.
+-->
+<style>
+  :root { --rosa: #FF6FA8; --azul: #4F7BE8; --navy: #1F2A5C; --gris: #6B7BB8;
+          --rojo: #B5303F; --verde: #1E5C36; }
+  html, body { margin: 0; padding: 0; background: transparent; }
+  body { font-family: "Source Sans Pro", "Source Sans 3", -apple-system, BlinkMacSystemFont,
+         "Segoe UI", Roboto, sans-serif; color: var(--navy); }
+  .boton { display: flex; align-items: center; justify-content: center; gap: 8px;
+           box-sizing: border-box; width: 100%; min-height: 46px; padding: 11px 14px;
+           border-radius: 10px; color: #fff; font-size: 15px; font-weight: 600;
+           background: linear-gradient(135deg, var(--rosa), var(--azul));
+           cursor: pointer; user-select: none; -webkit-tap-highlight-color: transparent; }
+  .boton.ocupado { opacity: .6; pointer-events: none; }
+  .boton input { display: none; }
+  .estado { margin: 8px 2px 2px; font-size: 13px; line-height: 1.45; color: var(--gris); }
+  .estado:empty { display: none; }
+  .estado.error { color: var(--rojo); }
+  .estado.ok { color: var(--verde); }
+</style>
+</head>
+<body>
+  <label class="boton" id="boton">
+    <input type="file" id="archivo" accept="image/*">
+    <span>🖼️</span><span id="texto">Elegir fotos de la galería</span>
+  </label>
+  <p class="estado" id="estado"></p>
+
+<script>
+(function () {
+  "use strict";
+  var args = { max_fotos: 3, lado: 1280, calidad: 0.8, recibido: null };
+  var ocupado = false;
+  var boton = document.getElementById("boton");
+  var archivo = document.getElementById("archivo");
+  var estadoEl = document.getElementById("estado");
+
+  // Fotos mandadas que la app todavía no confirma (ver mandarPendiente).
+  var pendiente = null, reintento = null, intentos = 0;
+  var PRIMER_REINTENTO_MS = 6000, MAX_REINTENTOS = 4;   // a los 6, 12, 24 y 48 s
+  // Streamlit avisa a los componentes cuando pierde la conexión: los vuelve a
+  // pintar con disabled=true, y con disabled=false en cuanto se reconecta.
+  var desconectado = false;
+
+  function enviar(tipo, datos) {
+    var msg = { isStreamlitMessage: true, type: tipo };
+    for (var k in (datos || {})) { msg[k] = datos[k]; }
+    window.parent.postMessage(msg, "*");
+  }
+
+  // Al volver de la galería el celular puede tardar unos segundos en
+  // reconectarse, y mientras tanto Streamlit TIRA lo que se le mande sin
+  // avisar (así se perdían las fotos "la primera vez" con el cargador de
+  // antes). Por eso:
+  //   - sin conexión no se manda: se espera a que Streamlit se reconecte y
+  //     se manda en ese momento;
+  //   - y como red de seguridad, hasta que la app confirma (args.recibido) o
+  //     refresca este componente, se vuelve a mandar a los 6, 12, 24 y 48 s.
+  //     Cada vez más espaciado, para no mandar la misma foto dos veces con
+  //     señal lenta, donde la primera todavía puede ir en camino.
+  function mandarPendiente() {
+    if (!pendiente) { return; }
+    if (desconectado) {
+      estado("Sin conexión. Las fotos se mandan solas en cuanto regrese la señal…");
+      return;
+    }
+    enviar("streamlit:setComponentValue", { value: pendiente, dataType: "json" });
+    programarReintento();
+  }
+
+  function programarReintento(ms) {
+    clearTimeout(reintento);
+    reintento = null;
+    if (!pendiente || desconectado) { return; }
+    if (intentos >= MAX_REINTENTOS) {
+      estado("No pudimos mandar las fotos. Revisa tu señal y vuelve a elegirlas.", "error");
+      return;
+    }
+    var espera = (ms != null) ? ms : PRIMER_REINTENTO_MS * Math.pow(2, intentos);
+    reintento = setTimeout(function () { intentos += 1; mandarPendiente(); }, espera);
+  }
+
+  function confirmarRecibido() {
+    if (!pendiente || args.recibido !== pendiente.id) { return; }
+    pendiente = null;
+    clearTimeout(reintento);
+    reintento = null;
+    // Se suelta el valor: si no, las fotos viajarían otra vez en cada toque
+    // del formulario mientras este componente siga en pantalla.
+    enviar("streamlit:setComponentValue", { value: null, dataType: "json" });
+  }
+
+  // Al regresar la red o la pantalla, un reintento pronto (1.5 s, lo que suele
+  // tardar Streamlit en reconectarse) en vez de esperar el siguiente turno.
+  function alVolver() { if (pendiente) { programarReintento(1500); } }
+  document.addEventListener("visibilitychange", function () {
+    if (document.visibilityState === "visible") { alVolver(); }
+  });
+  window.addEventListener("online", alVolver);
+  window.addEventListener("pageshow", alVolver);
+
+  function ajustarAltura() {
+    enviar("streamlit:setFrameHeight", { height: Math.ceil(document.body.getBoundingClientRect().height) + 4 });
+  }
+
+  function estado(texto, clase) {
+    estadoEl.textContent = texto || "";
+    estadoEl.className = "estado" + (clase ? " " + clase : "");
+    ajustarAltura();
+  }
+
+  window.addEventListener("message", function (ev) {
+    var d = ev.data;
+    if (!d || d.type !== "streamlit:render") { return; }
+    var nuevos = d.args || {};
+    for (var k in nuevos) { args[k] = nuevos[k]; }
+    var varias = (args.max_fotos || 1) > 1;
+    archivo.multiple = varias;
+    document.getElementById("texto").textContent =
+      varias ? "Elegir fotos de la galería" : "Elegir la foto de la galería";
+    confirmarRecibido();
+    if (d.disabled === true) {
+      desconectado = true;
+      clearTimeout(reintento);
+      reintento = null;
+    } else if (d.disabled === false && desconectado) {
+      desconectado = false;                       // se reconectó: ahora sí se manda
+      if (pendiente) {
+        estado("✓ Conexión de vuelta, mandando las fotos…", "ok");
+        setTimeout(mandarPendiente, 300);
+      }
+    }
+    ajustarAltura();
+  });
+
+  function aBase64(blob) {
+    return new Promise(function (ok, mal) {
+      var lector = new FileReader();
+      lector.onload = function () { ok(String(lector.result).split(",")[1]); };
+      lector.onerror = function () { mal(lector.error); };
+      lector.readAsDataURL(blob);
+    });
+  }
+
+  function aJpeg(canvas, calidad) {
+    return new Promise(function (ok) { canvas.toBlob(ok, "image/jpeg", calidad); });
+  }
+
+  // Abre la foto con el decodificador del propio navegador (respeta la
+  // orientación de la cámara), la achica y la regresa como JPG.
+  function preparar(file) {
+    var url = URL.createObjectURL(file);
+    var img = new Image();
+    img.src = url;
+    var decodificada = img.decode ? img.decode() : new Promise(function (ok, mal) {
+      img.onload = ok; img.onerror = mal;
+    });
+    return decodificada.then(function () {
+      var w = img.naturalWidth, h = img.naturalHeight;
+      if (!w || !h) { throw new Error("sin tamaño"); }
+      var k = Math.min(1, args.lado / Math.max(w, h));
+      w = Math.max(1, Math.round(w * k));
+      h = Math.max(1, Math.round(h * k));
+      var canvas = document.createElement("canvas");
+      canvas.width = w; canvas.height = h;
+      var ctx = canvas.getContext("2d");
+      ctx.fillStyle = "#ffffff";          // las PNG con transparencia no salen negras
+      ctx.fillRect(0, 0, w, h);
+      ctx.drawImage(img, 0, 0, w, h);
+      return aJpeg(canvas, args.calidad).then(function (blob) {
+        if (!blob) { throw new Error("no se pudo convertir"); }
+        return aBase64(blob).then(function (b64) {
+          return { nombre: file.name || "foto.jpg", datos: b64, ancho: w, alto: h,
+                   peso: blob.size, peso_original: file.size };
+        });
+      });
+    }).finally(function () { URL.revokeObjectURL(url); });
+  }
+
+  archivo.addEventListener("change", function () {
+    var elegidas = Array.prototype.slice.call(archivo.files || []);
+    archivo.value = "";                    // para poder elegir otra vez la misma foto
+    if (!elegidas.length || ocupado) { return; }
+    var max = Math.max(1, args.max_fotos || 1);
+    var usar = elegidas.slice(0, max);
+    var fotos = [], fallas = 0;
+    ocupado = true;
+    boton.classList.add("ocupado");
+
+    var cadena = Promise.resolve();
+    usar.forEach(function (file, i) {
+      cadena = cadena.then(function () {
+        estado("Preparando foto " + (i + 1) + " de " + usar.length + "…");
+        return preparar(file).then(function (f) { fotos.push(f); }, function () { fallas += 1; });
+      });
+    });
+
+    cadena.then(function () {
+      ocupado = false;
+      boton.classList.remove("ocupado");
+      var partes = [];
+      if (fotos.length) {
+        partes.push("✓ " + (fotos.length === 1 ? "1 foto lista." : fotos.length + " fotos listas."));
+      }
+      if (elegidas.length > max) {
+        partes.push("Solo caben " + max + ": se tomaron las primeras.");
+      }
+      if (fallas) {
+        partes.push("No pudimos abrir " + (fallas === 1 ? "una foto" : fallas + " fotos") +
+                    ". Si tu cámara guarda en HEIC o HEIF, cámbiala a JPG en los ajustes de la cámara, o usa \"Tomar ahora\".");
+      }
+      estado(partes.join(" "), fallas ? "error" : "ok");
+      // Si hubo al menos una buena, la app se refresca y este aviso se pierde:
+      // por eso también se mandan las cuentas, para que la app lo repita.
+      if (fotos.length) {
+        pendiente = { id: Date.now() + "-" + Math.random().toString(36).slice(2), fotos: fotos,
+                      fallas: fallas, sobran: Math.max(0, elegidas.length - max) };
+        intentos = 0;
+        mandarPendiente();
+      }
+    });
+  });
+
+  enviar("streamlit:componentReady", { apiVersion: 1 });
+  window.addEventListener("load", ajustarAltura);
+  ajustarAltura();
+})();
+</script>
+</body>
+</html>
