@@ -16,9 +16,12 @@ from styles.theme import (
     color_semaforo, mensaje_segun_bono,
 )
 from data import (
-    get_resumen_promotor, get_tiendas_de_ruta, get_tiendas_cerca_ps,
+    get_resumen_promotor, get_tiendas_de_ruta,
     adaptar_promotor, adaptar_tiendas, get_periodo_descripcion
 )
+from components import cumplimiento
+
+CANALES_ELEGIBLES = ('AUTOSERVICIOS', 'CASH&CARRY', 'CASH & CARRY')
 
 
 def render(usuario: dict, periodo_id: str, solo_lectura: bool = False):
@@ -77,7 +80,8 @@ def render(usuario: dict, periodo_id: str, solo_lectura: bool = False):
         """)
 
     # ===== HERO DEL BONO =====
-    _render_bono_hero(bono_potencial, bono_final, pct_ps, mult_oos, candado_abierto)
+    _render_bono_hero(bono_potencial, bono_final, pct_ps, mult_oos, candado_abierto,
+                      resumen.get('PCT_PAGO', pct_ps))
 
     # ===== ALERTA DE CANDADO CERRADO (si aplica) =====
     if not candado_abierto:
@@ -106,7 +110,7 @@ def render(usuario: dict, periodo_id: str, solo_lectura: bool = False):
     _render_como_se_calcula(resumen)
 
     # ===== CUMPLIMIENTO POR CATEGORÍA =====
-    _render_cumplimiento_categorias(resumen)
+    _render_cumplimiento_categorias(resumen, adaptar_tiendas(get_tiendas_de_ruta(ruta, periodo_id)))
 
     # ===== CERCA DE SER PS =====
     _render_cerca_ps(ruta, periodo_id)
@@ -122,9 +126,19 @@ def render(usuario: dict, periodo_id: str, solo_lectura: bool = False):
             st.rerun()
 
 
-def _render_bono_hero(bono_potencial, bono_final, pct_ps, mult_oos, candado_abierto):
+def factor_ps(pct_ps, pct_pago) -> str:
+    """El primer factor de la cuenta del bono. v23: con 80% de PS o más se paga
+    el 100%, así que lo que se multiplica es el pago y no el PS. Antes decía
+    "PS 83% × OOS 62%" junto a un bono de 62%: la cuenta no daba."""
+    if f"{pct_pago:.0f}" == f"{pct_ps:.0f}":
+        return f"PS {pct_ps:.0f}%"
+    return f"PS {pct_ps:.0f}% (se paga {pct_pago:.0f}%)"
+
+
+def _render_bono_hero(bono_potencial, bono_final, pct_ps, mult_oos, candado_abierto, pct_pago):
     """Bono grande con gradiente. Atenuado si candado cerrado."""
     valor_mostrar = bono_potencial  # Siempre mostrar potencial
+    factor = factor_ps(pct_ps, pct_pago)
     label = "Tu bono va en" if candado_abierto else "Tu bono potencial"
     msg = mensaje_segun_bono(bono_final if candado_abierto else 0)
     emoji = "😄" if (candado_abierto and bono_final >= 60) else ("😟" if not candado_abierto else "🙂")
@@ -137,7 +151,7 @@ def _render_bono_hero(bono_potencial, bono_final, pct_ps, mult_oos, candado_abie
             <p style="font-size:52px;font-weight:500;margin:0;line-height:1;">{valor_mostrar:.0f}%</p>
             <div style="margin-top:10px;font-size:14px;">{emoji} {msg}</div>
             <div style="border-top:0.5px solid rgba(255,255,255,0.3);margin-top:14px;padding-top:12px;font-size:11px;opacity:0.9;">
-                PS {pct_ps:.0f}% × OOS {mult_oos:.0f}%
+                {factor} × OOS {mult_oos:.0f}%
             </div>
         </div>
         """)
@@ -149,7 +163,7 @@ def _render_bono_hero(bono_potencial, bono_final, pct_ps, mult_oos, candado_abie
             <div style="position:relative;z-index:1;opacity:0.55;">
                 <p style="font-size:13px;opacity:0.95;margin:0 0 6px;">{label}</p>
                 <p style="font-size:52px;font-weight:500;margin:0;line-height:1;">{valor_mostrar:.0f}%</p>
-                <p style="font-size:11px;margin:8px 0 0;opacity:0.85;">PS {pct_ps:.0f}% × OOS {mult_oos:.0f}% = {valor_mostrar:.0f}%</p>
+                <p style="font-size:11px;margin:8px 0 0;opacity:0.85;">{factor} × OOS {mult_oos:.0f}% = {valor_mostrar:.0f}%</p>
             </div>
             <div style="position:relative;z-index:2;margin-top:14px;display:flex;align-items:center;justify-content:center;gap:6px;background:rgba(181,48,63,0.95);padding:8px 14px;border-radius:10px;">
                 <span style="font-size:18px;">🔒</span>
@@ -335,6 +349,12 @@ def _render_como_se_calcula(resumen):
         )
 
 
+def color_oos(mult) -> str:
+    """v23: el multiplicador con semáforo (verde 95%+, ámbar 85%+), como en el
+    resto de la app. Antes siempre salía en verde, aunque fuera de 62%."""
+    return COLOR_GREEN if mult >= 95 else (COLOR_AMBER if mult >= 85 else COLOR_RED_DARK)
+
+
 def _render_kpis_ps_oos(resumen):
     """Dos tarjetas: %PS y Multiplicador OOS."""
     col1, col2 = st.columns(2, gap="small")
@@ -350,53 +370,57 @@ def _render_kpis_ps_oos(resumen):
         r.html(f"""
         <div style="background:{COLOR_BLUE_PALE};border:0.5px solid {COLOR_BLUE_BORDER_DARK};border-radius:12px;padding:14px;text-align:center;margin-bottom:12px;">
             <p style="font-size:12px;color:{COLOR_BLUE_DARK};margin:0 0 4px;">Multiplicador OOS</p>
-            <p style="font-size:26px;font-weight:500;margin:4px 0;color:{COLOR_GREEN};">{resumen['MULT_OOS_PCT']:.0f}%</p>
+            <p style="font-size:26px;font-weight:500;margin:4px 0;color:{color_oos(resumen['MULT_OOS_PCT'])};">{resumen['MULT_OOS_PCT']:.0f}%</p>
             <p style="font-size:11px;color:{COLOR_TEXT_SECONDARY};margin:0;">{int(resumen['NO_CONT_OOS'])} sin contestar de {int(resumen['OBJ_OOS'])}</p>
         </div>
         """)
 
 
-def _render_cumplimiento_categorias(resumen):
-    """4 círculos con SOS Whisky/Tequila/Vodka y EXH."""
+def _render_cumplimiento_categorias(resumen, tiendas):
+    """4 círculos con SOS Whisky/Tequila/Vodka y EXH.
+
+    v23: el color ya no sale de metas fijas (35% whisky, 30% tequila, 25%
+    vodka), sino de cuántas de sus tiendas capturadas llegan a SU objetivo del
+    AOP, con el veredicto del bono (components/cumplimiento.py). Con la meta
+    fija de 30% el tequila salía rojo en 266 de 278 rutas, aunque en 205 de
+    ellas 8 de cada 10 tiendas ya cumplían su objetivo. El número grande sigue
+    siendo el mismo (SOS promedio, y en EXH el % de tiendas que cumple)."""
     sos_w = resumen['SOS_WHISKY_PROM']
     sos_t = resumen['SOS_TEQUILA_PROM']
     sos_v = resumen['SOS_VODKA_PROM']
     exh_ratio = float(resumen['EXH_4_PROM'])  # 0 a 1: % tiendas que cumplieron EXH 4
     exh_pct = exh_ratio * 100  # convertir a %
 
-    # Objetivos: 35% whisky, 30% tequila, 25% vodka, 80% EXH (% tiendas que cumplen)
-    color_w = _color_categoria(sos_w, 35)
-    color_t = _color_categoria(sos_t, 30)
-    color_v = _color_categoria(sos_v, 25)
-    color_e = _color_categoria(exh_pct, 80)
+    # Las mismas tiendas con que el pipeline saca esos promedios: las capturadas.
+    capturadas = (tiendas[(tiendas['Tienda Visitada'] == 1) & tiendas['CANAL'].isin(CANALES_ELEGIBLES)]
+                  if len(tiendas) else tiendas)
+    veredictos = [cumplimiento.categorias(t) for _, t in capturadas.iterrows()]
+    n = len(veredictos)
 
-    r.html(f"""
-    <div style="background:{COLOR_WHITE};border:0.5px solid {COLOR_BLUE_BORDER};border-radius:12px;padding:14px;margin-bottom:12px;">
-        <p style="font-size:13px;font-weight:500;margin:0 0 12px;color:{COLOR_NAVY};">Cumplimiento por categoría</p>
-        <div style="display:grid;grid-template-columns:1fr 1fr 1fr 1fr;gap:8px;">
-            <div style="text-align:center;">
-                <div style="width:44px;height:44px;border-radius:50%;background:{color_w};margin:0 auto 6px;display:flex;align-items:center;justify-content:center;color:white;font-size:22px;">🥃</div>
-                <p style="font-size:11px;color:{COLOR_TEXT_SECONDARY};margin:0;">Whisky</p>
-                <p style="font-size:13px;font-weight:500;margin:2px 0 0;color:{COLOR_NAVY};">{sos_w:.0f}%</p>
-            </div>
-            <div style="text-align:center;">
-                <div style="width:44px;height:44px;border-radius:50%;background:{color_t};margin:0 auto 6px;display:flex;align-items:center;justify-content:center;color:white;font-size:22px;">🍸</div>
-                <p style="font-size:11px;color:{COLOR_TEXT_SECONDARY};margin:0;">Tequila</p>
-                <p style="font-size:13px;font-weight:500;margin:2px 0 0;color:{COLOR_NAVY};">{sos_t:.0f}%</p>
-            </div>
-            <div style="text-align:center;">
-                <div style="width:44px;height:44px;border-radius:50%;background:{color_v};margin:0 auto 6px;display:flex;align-items:center;justify-content:center;color:white;font-size:22px;">🍹</div>
-                <p style="font-size:11px;color:{COLOR_TEXT_SECONDARY};margin:0;">Vodka</p>
-                <p style="font-size:13px;font-weight:500;margin:2px 0 0;color:{COLOR_NAVY};">{sos_v:.0f}%</p>
-            </div>
-            <div style="text-align:center;">
-                <div style="width:44px;height:44px;border-radius:50%;background:{color_e};margin:0 auto 6px;display:flex;align-items:center;justify-content:center;color:white;font-size:22px;">📦</div>
-                <p style="font-size:11px;color:{COLOR_TEXT_SECONDARY};margin:0;">EXH</p>
-                <p style="font-size:13px;font-weight:500;margin:2px 0 0;color:{COLOR_NAVY};">{exh_pct:.0f}%</p>
-            </div>
-        </div>
-    </div>
-    """)
+    def circulo(emoji_cat, etiqueta, cat, valor_txt):
+        en_obj = sum(v[cat] for v in veredictos)
+        # Semáforo de EXH de siempre: verde 80%+ de tiendas, ámbar 64%+.
+        color = _color_categoria(en_obj / n * 100, 80) if n else COLOR_GRAY_LIGHT
+        detalle = f'{en_obj} de {n} en objetivo' if n else 'sin tiendas capturadas'
+        return (
+            f'<div style="text-align:center;">'
+            f'<div style="width:44px;height:44px;border-radius:50%;background:{color};margin:0 auto 6px;display:flex;align-items:center;justify-content:center;color:white;font-size:22px;">{emoji_cat}</div>'
+            f'<p style="font-size:11px;color:{COLOR_TEXT_SECONDARY};margin:0;">{etiqueta}</p>'
+            f'<p style="font-size:13px;font-weight:500;margin:2px 0 0;color:{COLOR_NAVY};">{valor_txt}</p>'
+            f'<p style="font-size:10px;color:{COLOR_TEXT_SECONDARY};margin:2px 0 0;line-height:1.3;">{detalle}</p>'
+            f'</div>'
+        )
+
+    celdas = (circulo("🥃", "Whisky", "Whisky", f"{sos_w:.0f}%")
+              + circulo("🍸", "Tequila", "Tequila", f"{sos_t:.0f}%")
+              + circulo("🍹", "Vodka", "Vodka", f"{sos_v:.0f}%")
+              + circulo("📦", "EXH", "EXH", f"{exh_pct:.0f}%"))
+    r.html(
+        f'<div style="background:{COLOR_WHITE};border:0.5px solid {COLOR_BLUE_BORDER};border-radius:12px;padding:14px;margin-bottom:12px;">'
+        f'<p style="font-size:13px;font-weight:500;margin:0 0 2px;color:{COLOR_NAVY};">Cumplimiento por categoría</p>'
+        f'<p style="font-size:11px;color:{COLOR_TEXT_SECONDARY};margin:0 0 12px;">El color es cuántas de tus tiendas llegan a su objetivo</p>'
+        f'<div style="display:grid;grid-template-columns:1fr 1fr 1fr 1fr;gap:8px;">{celdas}</div></div>'
+    )
 
 
 def _color_categoria(valor, objetivo):
@@ -419,38 +443,23 @@ def _que_le_falta(t):
 
     Antes esto comparaba contra 4 puntos de EXH y 35% de whisky fijos. El
     objetivo de EXH es 2 en 189 tiendas, así que a esas les decía "va en 2/4"
-    cuando en realidad ya habían cumplido."""
-    faltantes = []
-    for col, col_obj, etiqueta, escala, decimales in (
-            ('Puntos Promedio Exhibición', 'Objetivo Puntos HS', 'EXH', 1, 0),
-            ('Total Whisky', 'Objetivo Whisky', 'Whisky', 100, 0),
-            ('Total tequila', 'Objetivo Tequila', 'Tequila', 100, 0),
-            ('Total vodka', 'Objetivo Vodka', 'Vodka', 100, 0)):
-        val, obj = t.get(col), t.get(col_obj)
-        if val is None or obj is None or pd.isna(val) or pd.isna(obj):
-            continue
-        try:
-            val, obj = float(val) * escala, float(obj)
-        except (TypeError, ValueError):
-            continue
-        if obj <= 0:            # sin objetivo cargado no se puede juzgar
-            continue
-        if val < obj:
-            faltantes.append((etiqueta, val, obj, decimales))
+    cuando en realidad ya habían cumplido.
 
+    v23: qué categoría falta ya no sale de restar, sino del veredicto del bono
+    (components/cumplimiento.py). Antes le decía "Falta EXH" a una tienda que
+    cumplía exhibiciones con lo que le completan licor y ron, y se callaba la
+    categoría sin objetivo cargado, que es justo la que no la deja ser PS."""
+    faltantes = _faltantes(t)
     if not faltantes:
         return "Cerca de ser PS"
 
-    # La que más lejos esté va primero: no tiene caso señalar una categoría a la
-    # que le faltan 3 centésimas si otra está 20 puntos abajo.
-    faltantes.sort(key=lambda f: f[2] - f[1], reverse=True)
-
     etq, val, obj, dec = faltantes[0]
-    sufijo = '%' if etq != 'EXH' else ''
-    txt_val, txt_obj = f"{val:.{dec}f}", f"{obj:.{dec}f}"
-
     if len(faltantes) > 1:
         return "Faltan " + ", ".join(f[0] for f in faltantes)
+    if val is None:
+        return f"{etq} sin objetivo cargado: así no puede ser PS"
+    sufijo = '%' if etq != 'EXH' else ''
+    txt_val, txt_obj = f"{val:.{dec}f}", f"{obj:.{dec}f}"
     # Si al redondear los dos números quedan iguales, mostrarlos sería absurdo
     # ("va en 35% de 35%"). Pasa en 69 comparaciones: diferencias de centésimas.
     if txt_val == txt_obj:
@@ -458,15 +467,63 @@ def _que_le_falta(t):
     return f"Falta {etq} (va en {txt_val}{sufijo} de {txt_obj}{sufijo})"
 
 
+def _faltantes(t):
+    """[(categoría, va en, objetivo, decimales)] de lo que le falta a la tienda,
+    lo que la tumba primero. 'va en' y 'objetivo' son None cuando la categoría
+    no trae objetivo cargado."""
+    cumple = cumplimiento.categorias(t)
+    faltantes = []
+    for col, col_obj, etiqueta, escala, decimales in (
+            ('Puntos Promedio Exhibición', 'Objetivo Puntos HS', 'EXH', 1, 0),
+            ('Total Whisky', 'Objetivo Whisky', 'Whisky', 100, 0),
+            ('Total tequila', 'Objetivo Tequila', 'Tequila', 100, 0),
+            ('Total vodka', 'Objetivo Vodka', 'Vodka', 100, 0)):
+        if cumple[etiqueta]:
+            continue
+        if etiqueta != 'EXH' and cumplimiento.sin_objetivo(t, etiqueta):
+            faltantes.append((etiqueta, None, None, decimales))
+            continue
+        try:
+            val, obj = float(t.get(col)) * escala, float(t.get(col_obj))
+        except (TypeError, ValueError):
+            val = obj = float('nan')
+        if pd.isna(val) or pd.isna(obj):
+            faltantes.append((etiqueta, None, None, decimales))
+        else:
+            faltantes.append((etiqueta, val, obj, decimales))
+    # La que más lejos esté va primero: no tiene caso señalar una categoría a la
+    # que le faltan 3 centésimas si otra está 20 puntos abajo.
+    faltantes.sort(key=lambda f: (f[1] is not None, -(f[2] - f[1]) if f[1] is not None else 0))
+    return faltantes
+
+
+def _distancia_ps(t):
+    """Para ordenar "Cerca de ser PS": (no puede ser PS, cuántas le faltan, qué tan lejos)."""
+    f = _faltantes(t)
+    return (any(v is None for _, v, _, _ in f), len(f),
+            sum((o - v) / o for _, v, o, _ in f if v is not None and o))
+
+
 def _render_cerca_ps(ruta, periodo_id):
-    """Top 3 tiendas que están cerca de ser PS."""
-    tiendas_cerca = adaptar_tiendas(get_tiendas_cerca_ps(ruta, periodo_id, top_n=3))
-    if len(tiendas_cerca) == 0:
+    """Top 3 tiendas que están cerca de ser PS.
+
+    v23: antes eran las 3 primeras sin PS en el orden en que llegaban de la
+    base, estuvieran cerca o no. Ahora van primero las que tienen menos
+    categorías por cumplir y, entre ésas, las más cerca de su objetivo; las que
+    no pueden ser PS porque les falta el objetivo cargado van al final."""
+    tiendas = adaptar_tiendas(get_tiendas_de_ruta(ruta, periodo_id))
+    if len(tiendas) == 0:
         return
+    candidatas = tiendas[(tiendas['Tienda Visitada'] == 1) & (tiendas['PS FINAL'] != 1)]
+    if len(candidatas) == 0:
+        return
+    tiendas_cerca = sorted((t for _, t in candidatas.iterrows()), key=_distancia_ps)[:3]
 
     items_html = ""
-    for _, t in tiendas_cerca.iterrows():
-        nombre = str(t.get('Tienda', 'Tienda'))[:30]
+    for t in tiendas_cerca:
+        # v23: el nombre completo. Cortado a 30 letras se perdía el número de
+        # tienda, y dos Soriana de la misma ruta se veían iguales.
+        nombre = str(t.get('Tienda', 'Tienda'))
         falta = _que_le_falta(t)
 
         items_html += (
