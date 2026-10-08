@@ -17,3 +17,7 @@ pandas>=2.0.0
 supabase>=2.0.0,<3
 bcrypt>=4.0.0
 Pillow>=10.0.0
+
+# Las descargas en Excel del tablero del director (v25). Tope en la mayor,
+# igual que supabase: una version mayor nueva puede cambiar como se escribe.
+openpyxl>=3.1,<4
