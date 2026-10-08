@@ -14,14 +14,24 @@ from auth import cerrar_sesion, set_periodo_actual
 import pandas as pd
 from data import get_periodos_director, get_tablero_director, get_resumen_director, limpiar_cache_director
 from components import director_secciones as sec
+from components import director_kpis as kpis
+from components import director_tienda as tienda
 
 SECCIONES = [
     ('inicio', 'Inicio', 'Tablero maestro', ':material/home:'),
     ('areas', 'Áreas', 'Áreas', ':material/map:'),
     ('supervisores', 'Supervisores', 'Supervisores', ':material/groups:'),
     ('foco', 'Foco OOS', 'Foco OOS', ':material/track_changes:'),
+    # v25: lo que el cliente mide de la ejecución, aparte del bono
+    ('exh', 'Exhibiciones', 'Exhibiciones', ':material/storefront:'),
+    ('osa', 'OSA', 'OSA · disponibilidad en anaquel', ':material/shelves:'),
+    ('precios', 'Precios', 'Precios · adherencia', ':material/sell:'),
+    # v25: todo el historial de una tienda, buscándola por nombre, CURT o cadena
+    ('tienda', 'Tiendas', 'Ficha de tienda', ':material/search:'),
     ('uso', 'Uso de ATLAS', 'Uso de ATLAS', ':material/smartphone:'),
 ]
+# Estas no usan el tablero del bono: leen sus propias tablas (data.get_kpis_cliente y get_ficha_tienda)
+SECCIONES_KPIS = {'exh': kpis.exhibiciones, 'osa': kpis.osa, 'precios': kpis.precios, 'tienda': tienda.ficha}
 PERIODOS_EN_TENDENCIA = 6
 
 CSS_DIRECTOR = """
@@ -280,6 +290,11 @@ def _encabezado(periodos, periodo_id, seccion):
 
 
 def _contenido(periodos, periodo_id, seccion):
+    if seccion in SECCIONES_KPIS:
+        # No se arma el tablero del bono (lo más pesado) para una sección que no lo usa.
+        with st.spinner("Leyendo los datos…"):
+            SECCIONES_KPIS[seccion](periodos, periodo_id)
+        return
     ids = periodos['periodo_id'].tolist()
     pos = ids.index(periodo_id)
     try:
