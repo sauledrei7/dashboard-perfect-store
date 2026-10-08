@@ -175,7 +175,9 @@ def exh_vista(ts, corte, ts_prev, corte_prev, est, semanas) -> dict:
     imp = _corte_mes(corte, 'impacto').set_index('clave')['exhibiciones'] if len(corte) else pd.Series(dtype=float)
     tot['sin_respuesta'] = int(imp.get('Sin respuesta', 0))
 
-    prev = corte_prev if corte_prev is not None else pd.DataFrame(columns=corte.columns)
+    # Un mes anterior sin datos del tablero (junio, o uno al que le faltan sus CSV) llega de
+    # Supabase como tabla vacía y sin columnas: se toma como si no hubiera mes anterior.
+    prev = corte_prev if corte_prev is not None and len(corte_prev) else pd.DataFrame(columns=corte.columns)
     cats = _corte_mes(corte, 'categoria')
     pos = cats[cats['clave'] == MATERIAL_POS]
     cats = cats[cats['clave'] != MATERIAL_POS].copy()
