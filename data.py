@@ -953,5 +953,137 @@ def limpiar_cache_director():
         _OOS_MES.clear()
     for funcion in (get_periodos_director, get_tablero_director, get_resumen_director,
                     get_incidencias_director, get_conteo_incidencias_director,
-                    get_uso_director, listar_periodos):
+                    get_uso_director, listar_periodos,
+                    get_kpis_cliente, get_periodos_con_precios, get_exh_escenas_tienda,
+                    get_catalogo_tiendas, get_ficha_tienda, get_equipo_rutas):
         funcion.clear()
+
+
+# ============================================================
+# EXHIBICIONES, OSA Y PRECIOS EN EL TABLERO DEL DIRECTOR  (v25)
+#
+# Siete tablas que llena DATAS/generar_csv_director.py (ver 09_kpis_cliente_v25.sql).
+# De cada KPI se leen las tablas del periodo y las del anterior (la primera
+# semana se compara contra la última del mes pasado) y la estructura de tiendas
+# del periodo. Los cálculos viven en kpis_cliente_calc.py.
+# ============================================================
+TABLAS_KPI_CLIENTE = {
+    'exh': ('exh_tienda_semana', 'exh_corte'),
+    'osa': ('osa_tienda_semana', 'osa_sku_semana'),
+    'precios': ('precios_tienda_semana', 'precios_corte'),
+}
+COLUMNAS_ESTRUCTURA_TIENDAS = 'curt, ruta, tienda, cadena, tienda_visitada'
+COLUMNAS_KP_ESTRUCTURA = 'ruta, supervisor, area_manager'
+
+
+@st.cache_data(ttl=TTL_CORRIDA, show_spinner=False)
+def get_kpis_cliente(periodo_id: str, kpi: str) -> dict:
+    """Las tablas de un KPI ('exh', 'osa' o 'precios') del periodo y del anterior.
+
+    Regresa None si el periodo no existe. Si las tablas todavía no están en
+    Supabase (falta correr el SQL de la v25), la lectura truena y la pantalla
+    avisa sin enseñar el error.
+    """
+    import director_calc as dc
+
+    fila, ids, reciente = _contexto_periodo(periodo_id)
+    if fila is None:
+        return None
+    pos = ids.index(periodo_id)
+    previo = ids[pos - 1] if pos > 0 else None
+    t_tienda, t_corte = TABLAS_KPI_CLIENTE[kpi]
+    del_periodo = {'eq': {'periodo_id': periodo_id}}
+    consultas = {
+        'rt': ('resumen_tienda', COLUMNAS_ESTRUCTURA_TIENDAS, del_periodo),
+        'kp': ('kpis_promotor', COLUMNAS_KP_ESTRUCTURA, del_periodo),
+        'tienda': (t_tienda, '*', del_periodo),
+        'corte': (t_corte, '*', del_periodo),
+    }
+    if previo:
+        consultas['tienda_ant'] = (t_tienda, '*', {'eq': {'periodo_id': previo}})
+        consultas['corte_ant'] = (t_corte, '*', {'eq': {'periodo_id': previo}})
+    if reciente != periodo_id:
+        consultas['kp_reciente'] = ('kpis_promotor', COLUMNAS_KP_ESTRUCTURA, {'eq': {'periodo_id': reciente}})
+    t = _leer_varios(consultas)
+    ruta_area, _ = dc.mapa_areas(t.get('kp_reciente', t['kp']))
+    periodos = get_periodos_director()
+    fila_previo = periodos[periodos['periodo_id'] == previo].iloc[0].to_dict() if previo else None
+    return {'periodo': fila, 'previo': fila_previo, 'rt': t['rt'], 'kp': t['kp'], 'ruta_area': ruta_area,
+            'tienda': t['tienda'], 'corte': t['corte'],
+            'tienda_ant': t.get('tienda_ant'), 'corte_ant': t.get('corte_ant'),
+            'leido': pd.Timestamp.now(tz='UTC').isoformat()}
+
+
+@st.cache_data(ttl=TTL_CORRIDA, show_spinner=False)
+def get_periodos_con_precios() -> list:
+    """Los periodos que ya tienen reporte de precios cargado."""
+    r = (_get_client().table('precios_corte').select('periodo_id')
+         .eq('corte', 'total').eq('semana', 0).execute())
+    return sorted({x['periodo_id'] for x in (r.data or [])})
+
+
+@st.cache_data(ttl=TTL_CORRIDA, show_spinner=False)
+def get_exh_escenas_tienda(periodo_id: str, curt: str) -> pd.DataFrame:
+    """Cada exhibición de una tienda en el periodo (para su detalle con liga a TRAX)."""
+    return _leer_todo('exh_escena', '*', eq={'periodo_id': periodo_id, 'curt': str(curt)})
+
+
+# ------------------------------------------------------------
+# La ficha de una tienda (v25): todo su historial, buscado por CURT.
+# No pide tablas nuevas: junta las del bono y las tres por tienda de arriba.
+# El armado vive en ficha_tienda_calc.py.
+# ------------------------------------------------------------
+TABLAS_FICHA = {'rt': 'resumen_tienda', 'ds': 'detalle_semanal', 'oos': 'oos_tienda_semana',
+                'exh': 'exh_tienda_semana', 'osa': 'osa_tienda_semana', 'pre': 'precios_tienda_semana'}
+
+
+@st.cache_data(ttl=TTL_CORRIDA, show_spinner=False)
+def get_catalogo_tiendas() -> pd.DataFrame:
+    """Todas las tiendas que han estado en algún periodo, para el buscador de la ficha.
+
+    Una fila por CURT, con el nombre y la cadena del periodo más reciente en que aparece.
+    """
+    periodos = get_periodos_director()
+    t = _leer_todo('resumen_tienda', 'curt, tienda, cadena, periodo_id')
+    if len(t) == 0 or len(periodos) == 0:
+        return pd.DataFrame(columns=['curt', 'tienda', 'cadena'])
+    orden = {pid: i for i, pid in enumerate(periodos['periodo_id'])}
+    t = t.assign(curt=t['curt'].astype(str), _orden=t['periodo_id'].map(orden).fillna(-1))
+    t = t.sort_values('_orden', kind='stable').drop_duplicates('curt', keep='last')
+    return t[['curt', 'tienda', 'cadena']].reset_index(drop=True)
+
+
+@st.cache_data(ttl=TTL_CORRIDA, show_spinner=False)
+def get_ficha_tienda(curt: str) -> dict:
+    """Las filas de UNA tienda en cada tabla, de todos los periodos (son pocas).
+
+    Si las tablas de la v25 todavía no están en Supabase, la lectura truena y la
+    pantalla avisa sin enseñar el error.
+    """
+    de_la_tienda = {'eq': {'curt': str(curt)}}
+    t = _leer_varios({nombre: (tabla, '*', de_la_tienda) for nombre, tabla in TABLAS_FICHA.items()})
+    t['leido'] = pd.Timestamp.now(tz='UTC').isoformat()
+    return t
+
+
+@st.cache_data(ttl=TTL_CORRIDA, show_spinner=False)
+def get_equipo_rutas(periodo_id: str) -> dict:
+    """{ruta: (supervisor, área)} de un periodo.
+
+    El supervisor es el de la ruta en ese periodo y el área la de la estructura más
+    reciente, igual que en Exhibiciones, OSA y Precios.
+    """
+    import director_calc as dc
+
+    fila, _, reciente = _contexto_periodo(periodo_id)
+    if fila is None:
+        return {}
+    consultas = {'kp': ('kpis_promotor', COLUMNAS_KP_ESTRUCTURA, {'eq': {'periodo_id': periodo_id}})}
+    if reciente != periodo_id:
+        consultas['kp_reciente'] = ('kpis_promotor', COLUMNAS_KP_ESTRUCTURA, {'eq': {'periodo_id': reciente}})
+    t = _leer_varios(consultas)
+    if len(t['kp']) == 0:
+        return {}
+    ruta_area, _ = dc.mapa_areas(t.get('kp_reciente', t['kp']))
+    return {str(x['ruta']): (x.get('supervisor'), ruta_area.get(x['ruta']) or x.get('area_manager'))
+            for x in t['kp'].drop_duplicates('ruta').to_dict('records')}
