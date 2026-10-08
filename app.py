@@ -24,6 +24,7 @@ from components import promotor_resumen, promotor_tiendas, tienda_detalle
 from components import supervisor_resumen, supervisor_promotores, supervisor_promotor_resumen
 from components import am_resumen, am_supervisores
 from components import director
+from components import cliente
 from data import listar_periodos, get_periodo_default, get_tiendas_de_ruta, adaptar_tiendas, get_resumen_promotor, adaptar_promotor
 
 
@@ -161,6 +162,8 @@ def _pantalla_inicial(tipo: str) -> str:
         return 'resumen_am'
     if tipo == 'admin':
         return 'director'
+    if tipo == 'cliente':
+        return 'validacion'
     return 'resumen_supervisor'
 
 
@@ -276,6 +279,11 @@ def main():
             director.render(usuario, periodo_id)
         else:
             _render_director_en_vista_am(usuario, pantalla, periodo_id)
+
+    # FLUJO CLIENTE (v24): valida las incidencias que levantan los promotores.
+    # Una sola pantalla, de computadora, con su propio menú y periodo.
+    elif usuario['tipo'] == 'cliente':
+        cliente.render(usuario, periodo_id)
 
     else:
         st.error("Tipo de usuario no reconocido.")

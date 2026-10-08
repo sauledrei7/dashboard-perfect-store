@@ -960,6 +960,131 @@ def limpiar_cache_director():
 
 
 # ============================================================
+# VALIDACIÓN DEL CLIENTE  (v24)
+#
+# El cliente aprueba o no aprueba cada incidencia dentro de ATLAS. Hasta
+# agosto eso se hacía en un Excel (INCIDENCIAS FINALES, columna VALIDACION
+# FINAL) que no guardaba quién, cuándo ni por qué.
+#
+# Su decisión vive en columnas propias de incidencias, aparte de la del
+# supervisor (estado), y cada cambio queda además en incidencias_historial.
+# Ver 06_validacion_cliente_v24.sql.
+#
+# Se lee con _leer_todo porque el cliente ve TODAS las incidencias del mes
+# (agosto tuvo 356) y la serie de una tienda cruza meses: con el límite de
+# 1,000 filas de la API, un mes grande se quedaría corto sin avisar.
+# Los cálculos viven en validacion_calc.py.
+# ============================================================
+COLUMNAS_SERIE_INC = ('id, curt, tipo, semana, periodo_id, estado, validacion_cliente, '
+                      'incidencia, motivo_cliente, created_at')
+COLUMNAS_DETALLE_VAL = ('curt, periodo_id, semana, incidencia, sos_whisky, sos_tequila, sos_vodka, '
+                        'exh_puntos, obj_whisky, obj_tequila, obj_vodka, obj_exh, cumplio_4')
+COLUMNAS_TIENDA_VAL = ('curt, periodo_id, ruta, tienda, cadena, canal, tienda_visitada, es_ps, cumplio_wtv, '
+                       'sos_whisky, sos_tequila, sos_vodka, exh_puntos, obj_whisky, obj_tequila, '
+                       'obj_vodka, obj_exh, cumplio_4')
+COLUMNAS_OOS_VAL = 'curt, periodo_id, semana, obj_oos, contestadas_oos, no_cont_oos'
+
+
+@st.cache_data(ttl=TTL_VIVO, show_spinner=False)
+def get_incidencias_validacion(periodo_id: str) -> pd.DataFrame:
+    """Todas las incidencias del periodo, con fotos, comentarios y ambas decisiones.
+    Si falla, que truene: la pantalla del cliente avisa en vez de enseñar una
+    cola vacía que parezca "ya no hay nada que validar"."""
+    return _leer_todo('incidencias', '*', eq={'periodo_id': periodo_id})
+
+
+@st.cache_data(ttl=TTL_VIVO, show_spinner=False)
+def get_series_incidencias() -> pd.DataFrame:
+    """Las incidencias de todos los meses, solo lo que hace falta para seguir
+    una misma tienda y KPI semana a semana."""
+    return _leer_todo('incidencias', COLUMNAS_SERIE_INC)
+
+
+@st.cache_data(ttl=TTL_CORRIDA, show_spinner=False)
+def get_estructura_periodo(periodo_id: str) -> pd.DataFrame:
+    """Ruta -> supervisor y área del periodo, para los filtros de la cola."""
+    return _leer_todo('kpis_promotor', 'ruta, supervisor, area_manager', eq={'periodo_id': periodo_id})
+
+
+@st.cache_data(ttl=TTL_CORRIDA, show_spinner=False)
+def get_kpis_tiendas(curts: tuple) -> dict:
+    """Detalle semanal, resumen del mes y OOS por semana de unas tiendas, de
+    todos los periodos: lo que midió TRAX, para el expediente y la tira."""
+    curts = tuple(str(c) for c in curts)
+    en = {'en': {'curt': curts}}
+    return _leer_varios({
+        'ds': ('detalle_semanal', COLUMNAS_DETALLE_VAL, en),
+        'rt': ('resumen_tienda', COLUMNAS_TIENDA_VAL, en),
+        'os': ('oos_tienda_semana', COLUMNAS_OOS_VAL, en),
+    })
+
+
+@st.cache_data(ttl=TTL_VIVO, show_spinner=False)
+def get_historial_incidencia(incidencia_id: int) -> pd.DataFrame:
+    """Cada decisión del cliente sobre una incidencia, de la más vieja a la más
+    nueva. Vacío si la tabla todavía no existe: la historia es un extra, no
+    debe tumbar el expediente."""
+    try:
+        sb = _get_client()
+        r = (sb.table('incidencias_historial').select('*')
+               .eq('incidencia_id', int(incidencia_id)).order('creado_at').execute())
+        return pd.DataFrame(r.data) if r.data else pd.DataFrame()
+    except Exception as e:
+        print(f"[VALIDACION HISTORIAL] {e}")
+        return pd.DataFrame()
+
+
+def validar_incidencia(incidencia_id: int, decision: str, por: str, visto: str,
+                       motivo: str = None, comentario: str = None):
+    """El cliente decide: decision = 'APROBADA', 'NO_APROBADA' o 'PENDIENTE'
+    (para regresarla a por validar).
+
+    visto = la decisión que el cliente tenía en pantalla. El UPDATE solo pasa si
+    en la base sigue igual: con dos usuarios de cliente, uno no pisa sin querer
+    lo que el otro acaba de decidir. Regresa la fila ya actualizada, o None si
+    alguien la cambió antes.
+
+    El historial va después y aparte: si esa segunda escritura falla, la
+    decisión ya quedó y es lo que importa para el cierre.
+    """
+    from datetime import datetime as _dtv, timezone as _tzv
+    sb = _get_client()
+    pendiente = decision == 'PENDIENTE'
+    motivo = (motivo or None) if decision == 'NO_APROBADA' else None
+    comentario = (comentario or None) if decision == 'NO_APROBADA' else None
+    cambios = {
+        'validacion_cliente': decision,
+        'validada_por': None if pendiente else por,
+        'validada_en': None if pendiente else _dtv.now(_tzv.utc).isoformat(),
+        'motivo_cliente': motivo,
+        'comentario_cliente': comentario,
+    }
+    r = (sb.table('incidencias').update(cambios)
+           .eq('id', int(incidencia_id)).eq('validacion_cliente', visto).execute())
+    if not r.data:
+        return None
+    try:
+        sb.table('incidencias_historial').insert({
+            'incidencia_id': int(incidencia_id), 'decision': decision, 'anterior': visto,
+            'por': por, 'motivo': motivo, 'comentario': comentario,
+        }).execute()
+    except Exception as e:
+        print(f"[VALIDACION HISTORIAL WARN] incidencia {incidencia_id}: {e}")
+    return r.data[0]
+
+
+def limpiar_cache_validacion(todo: bool = False):
+    """Después de cada decisión se olvidan las incidencias, para que la cola y
+    el avance se vean al momento. Con todo=True (botón "Actualizar datos")
+    también los periodos y lo que midió TRAX."""
+    for funcion in (get_incidencias_validacion, get_series_incidencias, get_historial_incidencia):
+        funcion.clear()
+    if todo:
+        for funcion in (get_estructura_periodo, get_kpis_tiendas, get_periodos_director, listar_periodos):
+            funcion.clear()
+
+
+# ============================================================
 # EXHIBICIONES, OSA Y PRECIOS EN EL TABLERO DEL DIRECTOR  (v25)
 #
 # Siete tablas que llena DATAS/generar_csv_director.py (ver 09_kpis_cliente_v25.sql).
