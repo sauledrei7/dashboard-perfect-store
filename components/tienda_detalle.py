@@ -27,7 +27,7 @@ def render(periodo_id: str):
         return
 
     info_raw = get_tienda_info(curt, periodo_id)
-    info = adaptar_tiendas(__import__('pandas').DataFrame([info_raw]) if info_raw else __import__('pandas').DataFrame()).iloc[0].to_dict() if info_raw else None
+    info = adaptar_tiendas(pd.DataFrame([info_raw])).iloc[0].to_dict() if info_raw else None
     detalle = adaptar_detalle(get_detalle_tienda(curt, periodo_id))
 
     if info is None or len(detalle) == 0:

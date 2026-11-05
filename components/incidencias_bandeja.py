@@ -1,12 +1,18 @@
 """
-Bandeja de incidencias (v11) — el supervisor AUTORIZA/RECHAZA; AM y director solo ven.
-La ven el supervisor (incidencias de sus promotores) y el AM (de toda su área).
-Muestra las incidencias levantadas como una lista tipo notificaciones,
-con opción de ver las fotos (URL firmada temporal).
+Bandeja de incidencias (v11). La ven el supervisor (las de su equipo) y el AM
+(las de toda su área), como una lista tipo notificaciones, con sus fotos.
+
+Quién autoriza o rechaza:
+  - hasta septiembre, el supervisor, lo que levantaban sus promotores;
+  - v28: el GR (el area manager), y solo las de su área. Desde octubre las
+    levanta el supervisor y nacen pendientes; quien levanta ya no valida. Las
+    que los promotores dejaron pendientes antes del cambio también las valida
+    el GR. El supervisor y el director solo ven.
 """
 import streamlit as st
 import render as r
 import pandas as pd
+import validacion_calc as vc
 from styles.theme import (
     COLOR_PINK_PALE, COLOR_PINK_TEXT, COLOR_PINK_BORDER, COLOR_BLUE_PALE,
     COLOR_BLUE_BG, COLOR_BLUE_BORDER, COLOR_NAVY, COLOR_TEXT_SECONDARY,
@@ -28,9 +34,9 @@ def render(periodo_id: str, area_manager: str = None, supervisor: str = None,
            key: str = "band", puede_resolver: bool = None):
     df = get_incidencias_ambito(periodo_id, area_manager=area_manager, supervisor=supervisor)
     n = len(df)
-    # Por defecto: solo el supervisor autoriza/rechaza; AM y director solo ven.
+    # v28: por defecto solo el GR valida, y solo en su área.
     if puede_resolver is None:
-        puede_resolver = bool(supervisor) and not area_manager
+        puede_resolver = puede_validar(area_manager)
 
     # Encabezado con contador tipo notificación
     titulo = "Incidencias del área" if area_manager else "Incidencias de tu equipo"
@@ -46,6 +52,17 @@ def render(periodo_id: str, area_manager: str = None, supervisor: str = None,
         {badge}{pend_badge}
     </div>
     """)
+    if puede_resolver:
+        nota = "Tú las validas: autoriza o rechaza las que estén pendientes."
+    elif supervisor and not area_manager:
+        nota = "Las levantas tú desde cada tienda, cuando el mes está abierto; las valida tu GR."
+    else:
+        nota = ""
+    if nota:
+        r.html(f'<p style="font-size:11px;color:{COLOR_TEXT_SECONDARY};margin:-4px 4px 8px;">{nota}</p>')
+    aviso = st.session_state.pop('_bandeja_aviso', None)
+    if aviso:
+        st.info(aviso)
 
     if n == 0:
         r.html(f"""
@@ -67,8 +84,24 @@ def render(periodo_id: str, area_manager: str = None, supervisor: str = None,
         # Orden más reciente primero
         if 'created_at' in df.columns:
             df = df.sort_values('created_at', ascending=False)
+        # v26: la llave va por el id de la incidencia y no por su posición: si llega
+        # una nueva mientras el supervisor escribe un rechazo, la lista se recorre
+        # y con la posición el "rechazando" brincaba a otra tarjeta.
         for idx, inc in df.iterrows():
-            _render_tarjeta(inc, key=f"{key}_{idx}", puede_resolver=puede_resolver)
+            ident = inc.get('id')
+            _render_tarjeta(inc, key=f"{key}_{ident if pd.notna(ident) else idx}", puede_resolver=puede_resolver)
+
+
+def puede_validar(area_manager) -> bool:
+    """v28: valida (autoriza o rechaza) solo el GR, y solo las de su área.
+
+    Se pregunta al usuario de la sesión y no al que recibe la pantalla: el
+    director entra a las pantallas del AM con un usuario prestado de tipo 'am',
+    pero su sesión dice 'admin', así que ahí solo ve.
+    """
+    u = st.session_state.get('usuario') or {}
+    return (bool(area_manager) and u.get('tipo') == 'am'
+            and str(u.get('identificador') or '').strip() == str(area_manager).strip())
 
 
 def _render_resumen_tipos(df):
@@ -80,7 +113,7 @@ def _render_resumen_tipos(df):
             f'<div style="background:{COLOR_WHITE};border:0.5px solid {COLOR_BLUE_BORDER};'
             f'border-radius:8px;padding:6px 10px;text-align:center;min-width:70px;">'
             f'<p style="font-size:18px;font-weight:600;margin:0;color:{color};">{c}</p>'
-            f'<p style="font-size:10px;color:{COLOR_TEXT_SECONDARY};margin:2px 0 0;">{tipo}</p>'
+            f'<p style="font-size:10px;color:{COLOR_TEXT_SECONDARY};margin:2px 0 0;">{r.texto(tipo)}</p>'
             f'</div>'
         )
     r.html(
@@ -121,15 +154,33 @@ def _render_tarjeta(inc, key, puede_resolver=False):
     else:
         est_bg, est_color, est_txt = COLOR_AMBER_PALE, COLOR_AMBER, '⏳ Pendiente'
 
+    # v27: si la levantó el supervisor, se dice quién; si no, la ruta del promotor.
+    if vc.levanto_supervisor(inc):
+        origen = f"Ruta {r.texto(ruta)} · la levantó {r.texto(inc.get('reportada_por'))}"
+    else:
+        origen = f"Reportada por {r.texto(ruta)}"
+    # v28: y quién la validó, y por qué la rechazó, para que el supervisor lo vea.
+    resolvio = vc.texto(inc.get('resuelta_por'))
+    if resolvio and estado in ('AUTORIZADA', 'NO_AUTORIZADA'):
+        origen += f" · la {'autorizó' if estado == 'AUTORIZADA' else 'rechazó'} {r.texto(resolvio)}"
+    motivo_rechazo = vc.texto(inc.get('motivo_rechazo'))
+    rechazo_html = (
+        f'<p style="font-size:11px;color:{COLOR_RED_DARK};margin:4px 0 0;">Motivo del rechazo: {r.texto(motivo_rechazo)}</p>'
+        if estado == 'NO_AUTORIZADA' and motivo_rechazo else ''
+    )
+
+    # v26: lo que escribió el promotor (comentario, link) y lo que viene de la base
+    # pasa por r.texto() / r.url() antes de entrar al HTML. Ver render.py.
+    link_trax = r.url(link_trax)
     trax_html = (
-        f'<a href="{link_trax}" target="_blank" style="font-size:11px;color:{COLOR_BLUE_DARK};'
-        f'text-decoration:none;">🔗 Ver visita Trax</a>' if link_trax else ''
+        f'<a href="{link_trax}" target="_blank" rel="noopener noreferrer" style="font-size:11px;'
+        f'color:{COLOR_BLUE_DARK};text-decoration:none;">🔗 Ver visita Trax</a>' if link_trax else ''
     )
 
     # Motivo especifico: es lo primero que necesita leer quien autoriza
     motivo_html = (
         f'<p style="font-size:12px;font-weight:500;color:{COLOR_BLUE_DARK};margin:4px 0 0;">'
-        f'{etiqueta_motivo(motivo)}</p>'
+        f'{r.texto(etiqueta_motivo(motivo))}</p>'
     ) if motivo else ''
 
     prods_html = ''
@@ -141,7 +192,7 @@ def _render_tarjeta(inc, key, puede_resolver=False):
         else:
             etiqueta = '%s y %d más' % (str(prods[0])[:30], len(prods) - 1)
         prods_html = (
-            f'<p style="font-size:11px;color:{COLOR_TEXT_SECONDARY};margin:3px 0 0;">🍾 {etiqueta}</p>'
+            f'<p style="font-size:11px;color:{COLOR_TEXT_SECONDARY};margin:3px 0 0;">🍾 {r.texto(etiqueta)}</p>'
         )
 
     # OJO: esta tarjeta se arma concatenando strings de UNA línea, NO con un
@@ -154,16 +205,17 @@ def _render_tarjeta(inc, key, puede_resolver=False):
         f'border-radius:10px;padding:10px 12px;margin-bottom:4px;">'
         f'<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px;">'
         f'<span style="background:{COLOR_PINK_PALE};color:{color};font-size:11px;font-weight:500;'
-        f'padding:2px 8px;border-radius:6px;">{tipo}</span>'
+        f'padding:2px 8px;border-radius:6px;">{r.texto(tipo)}</span>'
         f'<span style="background:{est_bg};color:{est_color};font-size:11px;font-weight:500;'
         f'padding:2px 8px;border-radius:6px;">{est_txt}</span>'
         f'</div>'
-        f'<p style="font-size:13px;font-weight:500;color:{COLOR_NAVY};margin:4px 0 0;">{tienda}</p>'
+        f'<p style="font-size:13px;font-weight:500;color:{COLOR_NAVY};margin:4px 0 0;">{r.texto(tienda)}</p>'
         f'{motivo_html}'
         f'{prods_html}'
         f'<p style="font-size:11px;color:{COLOR_TEXT_SECONDARY};margin:4px 0 0;">'
-        f'{sem_txt} · {fecha} · Reportada por {ruta}</p>'
-        f'<p style="font-size:12px;color:{COLOR_NAVY};margin:6px 0 0;line-height:1.4;">{com}</p>'
+        f'{sem_txt} · {r.texto(fecha)} · {origen}</p>'
+        f'<p style="font-size:12px;color:{COLOR_NAVY};margin:6px 0 0;line-height:1.4;">{r.texto(com)}</p>'
+        f'{rechazo_html}'
         f'<div style="margin-top:4px;">{trax_html}</div>'
         f'</div>'
     )
@@ -189,28 +241,46 @@ def _render_tarjeta(inc, key, puede_resolver=False):
         _render_acciones_resolver(inc_id, key)
 
 
-def _render_acciones_resolver(inc_id, key):
+def _resolver(inc_id, autorizar, motivo=None) -> bool:
+    """Guarda lo que decidió el GR. Si Supabase falla, avisa en vez de tirar la
+    pantalla (antes el error salía como traceback)."""
     from data import resolver_incidencia, get_incidencias_de_tienda
+    usuario = st.session_state.get('usuario', {})
+    if usuario.get('tipo') != 'am':
+        # Los botones solo se pintan para el GR; esto es por si acaso.
+        st.error("Solo el GR puede validar incidencias.")
+        return False
+    try:
+        cambio = resolver_incidencia(inc_id, autorizar=autorizar,
+                                     resuelta_por=usuario.get('username', usuario.get('identificador', '')),
+                                     motivo_rechazo=(motivo or '')[:300] or None)
+    except Exception as e:
+        print(f"[BANDEJA RESOLVER ERROR] {inc_id}: {e}")
+        st.error("No se pudo guardar. Revisa tu conexión e intenta otra vez.")
+        return False
+    if not cambio:
+        # v28: ya no estaba pendiente (la validaron en otra pestaña). No se pisa.
+        st.session_state['_bandeja_aviso'] = "Esa incidencia ya estaba validada; la lista ya muestra cómo quedó."
+    try:
+        get_incidencias_de_tienda.clear()
+    except Exception:
+        pass
+    return True
+
+
+def _render_acciones_resolver(inc_id, key):
     rechazar_key = f"rechazando_{key}"
 
     if st.session_state.get(rechazar_key):
         # Modo rechazo: pedir motivo
-        motivo = st.text_input("Motivo del rechazo *", key=f"motivo_{key}",
+        motivo = st.text_input("Motivo del rechazo *", key=f"motivo_{key}", max_chars=300,
                                placeholder="Ej. la foto no corresponde a la tienda")
         c1, c2 = st.columns(2)
         with c1:
             if st.button("Confirmar rechazo", key=f"conf_rech_{key}", type="primary"):
                 if not (motivo or '').strip():
                     st.error("Escribe el motivo del rechazo.")
-                else:
-                    usuario = st.session_state.get('usuario', {})
-                    resolver_incidencia(inc_id, autorizar=False,
-                                        resuelta_por=usuario.get('username', usuario.get('identificador', '')),
-                                        motivo_rechazo=motivo.strip())
-                    try:
-                        get_incidencias_de_tienda.clear()
-                    except Exception:
-                        pass
+                elif _resolver(inc_id, autorizar=False, motivo=motivo.strip()):
                     st.session_state[rechazar_key] = False
                     st.rerun()
         with c2:
@@ -221,14 +291,8 @@ def _render_acciones_resolver(inc_id, key):
         c1, c2 = st.columns(2)
         with c1:
             if st.button("✓ Autorizar", key=f"aut_{key}", type="primary"):
-                usuario = st.session_state.get('usuario', {})
-                resolver_incidencia(inc_id, autorizar=True,
-                                    resuelta_por=usuario.get('username', usuario.get('identificador', '')))
-                try:
-                    get_incidencias_de_tienda.clear()
-                except Exception:
-                    pass
-                st.rerun()
+                if _resolver(inc_id, autorizar=True):
+                    st.rerun()
         with c2:
             if st.button("✕ Rechazar", key=f"rech_{key}"):
                 st.session_state[rechazar_key] = True

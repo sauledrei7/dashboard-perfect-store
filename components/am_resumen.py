@@ -52,7 +52,7 @@ def render(usuario: dict, periodo_id: str):
     with col1:
         r.html(f"""
         <div>
-            <p style="font-size:13px;color:{COLOR_TEXT_SECONDARY};margin:0;">Hola {usuario['nombre']}</p>
+            <p style="font-size:13px;color:{COLOR_TEXT_SECONDARY};margin:0;">Hola {r.texto(usuario['nombre'])}</p>
             <p style="font-size:17px;font-weight:500;margin:2px 0 0;color:{COLOR_NAVY};">Area Manager</p>
             <p style="font-size:11px;color:{COLOR_PINK_TEXT_LIGHT};margin:2px 0 0;">{n_sup} supervisores · {n_promo} promotores · {resumen['TIENDAS_TOTALES']} tiendas</p>
         </div>
@@ -117,7 +117,7 @@ def render(usuario: dict, periodo_id: str):
     # ===== Atención urgente: supervisores con candado cerrado =====
     _render_alertas_supervisores(am, periodo_id)
 
-    # ===== Incidencias del área (solo visual) =====
+    # ===== Incidencias del área: desde la v28 las valida aquí el GR =====
     from components import incidencias_bandeja
     incidencias_bandeja.render(periodo_id, area_manager=am, key="band_am")
 

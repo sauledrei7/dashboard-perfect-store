@@ -62,7 +62,7 @@ def render(usuario: dict, periodo_id: str, solo_lectura: bool = False):
         with col1:
             r.html(f"""
             <div>
-                <p style="font-size:13px;color:{COLOR_TEXT_SECONDARY};margin:0;">Hola {usuario['nombre']}</p>
+                <p style="font-size:13px;color:{COLOR_TEXT_SECONDARY};margin:0;">Hola {r.texto(usuario['nombre'])}</p>
                 <p style="font-size:18px;font-weight:500;margin:2px 0 0;color:{COLOR_NAVY};">Ruta {ruta}</p>
             </div>
             """)

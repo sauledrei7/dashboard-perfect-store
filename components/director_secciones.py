@@ -567,7 +567,7 @@ def _tabla_nr(lista) -> str:
               f'<td><span class="dt dt-{tono_sem}">{x["nr_arriba"]} de {x["nr_eval"]}</span></td>'
               f'<td><span class="dt dt-{tono_inc}">{x["inc_nr"]}</span></td></tr>')
     return h + ('</table><p class="dnota">Semanas arriba del promedio: de las últimas 9 semanas con respuestas. '
-                'Incidencias: cuántas veces respaldó un "no reconocido" con incidencia y foto en ATLAS este periodo.</p>')
+                'Incidencias: cuántas de "no reconocido" tiene su ruta en ATLAS este periodo, con foto.</p>')
 
 
 def _tabla_sc(lista) -> str:
@@ -640,6 +640,18 @@ def _svg_motivos(P) -> str:
 # ============================================================
 # 5. USO DE ATLAS
 # ============================================================
+def _origen_incidencias(inc) -> str:
+    """v27/v28: quién levantó las incidencias del mes y cómo van, para el subtítulo."""
+    partes = []
+    if inc.get('de_supervisor'):
+        partes.append(f"{inc['de_supervisor']} de supervisores")
+    de_promotor = inc['total'] - inc.get('de_supervisor', 0)
+    if de_promotor and partes:
+        partes.append(f"{de_promotor} de promotores")
+    partes.append(f"{inc['autorizadas']} autorizadas · {inc['rechazadas']} rechazadas")
+    return ' · '.join(partes)
+
+
 def uso(P, PREV):
     with st.spinner("Revisando accesos e incidencias…"):
         U = get_uso_director(P['id'])
@@ -656,22 +668,38 @@ def uso(P, PREV):
            + kpi('azul', 'Promotores que no han entrado', f(len(U['sin_entrar'])),
                  'dc-r' if U['sin_entrar'] else 'dc-g', 'en los últimos 7 días')
            + kpi('rosa', 'Incidencias levantadas', f(inc['total']), 'dc-n',
-                 f'en {P["nombre"].lower()} · {inc["autorizadas"]} autorizadas · {inc["rechazadas"]} rechazadas')
-           + kpi('azul', 'Pendientes de autorizar', f(inc['pendientes']),
+                 f'en {P["nombre"].lower()} · ' + _origen_incidencias(inc))
+           + kpi('azul', 'Pendientes de validar', f(inc['pendientes']),
                  'dc-r' if inc['pendientes_viejas'] else 'dc-n', f'{inc["pendientes_viejas"]} con más de 3 días esperando')
            + '</div>')
 
-    def fila_sup(s):
+    def pendientes(s):
         tono = 'r' if s['pendientes_viejas'] else ('y' if s['pendientes'] else 'b')
         viejas = f' · {s["pendientes_viejas"]} con +3 días' if s['pendientes_viejas'] else ''
+        return f'<td><span class="dt dt-{tono}">{s["pendientes"]}{viejas}</span></td>'
+
+    def fila_sup(s):
         return (f'<tr><td class="di"><span class="dn1">{_e(s["sup"])}</span><span class="dn2">{_e(s["area"])}</span></td>'
-                f'<td class="dnum">{s["levantadas"]}</td><td class="dnum">{s["autorizadas"]}</td>'
-                f'<td class="dnum">{s["rechazadas"]}</td>'
-                f'<td><span class="dt dt-{tono}">{s["pendientes"]}{viejas}</span></td>'
-                f'<td class="dnum">{f(s["dias_resolver"], 1)}</td></tr>')
+                f'<td class="dnum">{s["levantadas"]}</td><td class="dnum">{s.get("levanto_el", 0)}</td>'
+                f'<td class="dnum">{s["autorizadas"]}</td>'
+                f'<td class="dnum">{s["rechazadas"]}</td>' + pendientes(s)
+                + f'<td class="dnum">{f(s["dias_resolver"], 1)}</td></tr>')
+
+    def fila_gr(g):
+        return (f'<tr><td class="di"><span class="dn1">{_e(g["area"])}</span></td>'
+                f'<td class="dnum">{g["levantadas"]}</td><td class="dnum">{g["autorizadas"]}</td>'
+                f'<td class="dnum">{g["rechazadas"]}</td>' + pendientes(g)
+                + f'<td class="dnum">{f(g["dias_resolver"], 1)}</td></tr>')
     filas = ''.join(fila_sup(s) for s in U['por_supervisor'])
-    tabla_sups = ('<table class="dtab"><tr><th class="di">Supervisor</th><th>Levantadas</th><th>Autorizadas</th>'
-                  '<th>Rechazadas</th><th>Pendientes</th><th>Días en resolver</th></tr>' + filas + '</table>')
+    tabla_sups = ('<table class="dtab"><tr><th class="di">Supervisor</th><th>Levantadas</th><th>Las levantó él</th>'
+                  '<th>Autorizadas</th><th>Rechazadas</th><th>Pendientes</th><th>Días en resolver</th></tr>'
+                  + filas + '</table>'
+                  '<p class="dnota">Desde octubre las incidencias las levanta el supervisor y las valida el GR de su '
+                  'área; hasta septiembre las levantaba el promotor y las validaba su supervisor.</p>')
+    filas_gr = ''.join(fila_gr(g) for g in U.get('por_gr', []))
+    tabla_gr = ('<table class="dtab"><tr><th class="di">GR</th><th>Levantadas</th><th>Autorizadas</th>'
+                '<th>Rechazadas</th><th>Pendientes</th><th>Días en resolver</th></tr>' + filas_gr + '</table>'
+                ) if filas_gr else '<div class="dvacio">Sin incidencias en este periodo.</div>'
 
     def cuando(x):
         return 'sin entrar en 35 días o más' if x['dias'] is None else f'última vez hace {x["dias"]} días'
@@ -681,7 +709,9 @@ def uso(P, PREV):
         f'{cuando(x)}</span></div>' for x in U['sin_entrar'][:20])
     resto = len(U['sin_entrar']) - 20
     r.html('<div class="dg dg21">'
-           '<div class="dcard">' + tarjeta_titulo('Incidencias por supervisor', 'Quién autoriza a tiempo y quién las deja esperando')
+           '<div class="dcard">' + tarjeta_titulo('Incidencias por GR', 'Quién valida a tiempo y quién las deja esperando')
+           + f'<div class="dtw">{tabla_gr}</div>'
+           + tarjeta_titulo('Incidencias por supervisor', 'Cuántas levanta y cómo van')
            + f'<div class="dtw">{tabla_sups}</div></div>'
            '<div class="dcard">' + tarjeta_titulo('Promotores sin entrar', 'Más de 7 días sin abrir ATLAS')
            + (lista or '<div class="dvacio">Todos los promotores entraron esta semana.</div>')

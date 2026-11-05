@@ -18,6 +18,7 @@ from data import (
     get_resumen_supervisor, get_promotores_de_supervisor,
     get_promotores_cerca_80, get_mejor_y_peor_promotor,
     adaptar_supervisor, adaptar_promotor, get_periodo_descripcion,
+    get_ventanas_incidencias,
 )
 from components.promotor_resumen import factor_ps, color_oos
 
@@ -55,7 +56,7 @@ def render(usuario: dict, periodo_id: str):
     with col1:
         r.html(f"""
         <div>
-            <p style="font-size:13px;color:{COLOR_TEXT_SECONDARY};margin:0;">Hola {usuario['nombre']}</p>
+            <p style="font-size:13px;color:{COLOR_TEXT_SECONDARY};margin:0;">Hola {r.texto(usuario['nombre'])}</p>
             <p style="font-size:17px;font-weight:500;margin:2px 0 0;color:{COLOR_NAVY};">Supervisor</p>
             <p style="font-size:11px;color:{COLOR_PINK_TEXT_LIGHT};margin:2px 0 0;">{rutas_a_cargo} promotores · {total_tiendas} tiendas</p>
         </div>
@@ -119,7 +120,10 @@ def render(usuario: dict, periodo_id: str):
     # ===== Ranking equipo =====
     _render_ranking(supervisor, periodo_id)
 
-    # ===== Incidencias del equipo (solo visual) =====
+    # ===== v27: el mes que está abierto para levantar incidencias =====
+    _render_aviso_incidencias(periodo_id)
+
+    # ===== Incidencias del equipo =====
     from components import incidencias_bandeja
     incidencias_bandeja.render(periodo_id, supervisor=supervisor, key="band_sup")
 
@@ -128,6 +132,36 @@ def render(usuario: dict, periodo_id: str):
     if st.button(f"Ver mis {rutas_a_cargo} promotores →", key="ver_promos_btn"):
         st.session_state.pantalla = 'lista_promotores'
         st.rerun()
+
+
+def _ir_a_periodo(periodo_id):
+    """Cambia el periodo de toda la app. Va en el on_click del botón, antes de
+    que se pinte el selector de arriba: se le borra su valor y vuelve a nacer
+    parado en el periodo nuevo. Ponerle el valor a mano haría que Streamlit
+    enseñe un aviso amarillo, porque el selector también trae su index."""
+    st.session_state['periodo_id'] = periodo_id
+    st.session_state.pop('selector_periodo', None)
+
+
+def _render_aviso_incidencias(periodo_id):
+    """v27: desde octubre el supervisor levanta las incidencias, y solo mientras
+    el mes está abierto (de que se carga su última semana TRAX al cierre). Si
+    hay uno abierto, se dice aquí; si no es el periodo que tiene elegido, con un
+    botón para irse a ese."""
+    abiertos = [(pid, v) for pid, v in get_ventanas_incidencias().items() if v['abiertas']]
+    for pid, v in abiertos:
+        mes = r.texto(v['mes'])
+        r.html(
+            f'<div style="background:{COLOR_PINK_PALE};border:0.5px solid {COLOR_PINK_BORDER};border-radius:12px;'
+            f'padding:12px 14px;margin:14px 0 6px;">'
+            f'<p style="font-size:13px;font-weight:500;color:{COLOR_NAVY};margin:0 0 4px;">'
+            f'📣 Ya puedes levantar las incidencias de {mes}</p>'
+            f'<p style="font-size:12px;color:{COLOR_TEXT_SECONDARY};margin:0;line-height:1.5;">'
+            f'Entra a la tienda desde tus promotores. Si el mismo problema le pegó a varias semanas, '
+            f'márcalas todas en una sola. Las valida tu GR, y se cierran cuando se sube el cierre del mes.</p></div>'
+        )
+        if pid != periodo_id:
+            st.button(f"Ir a {v['mes']} →", key=f"ir_inc_{pid}", on_click=_ir_a_periodo, args=(pid,))
 
 
 def _render_bono_supervisor_hero(bono_potencial, bono_final, pct_ps, mult_oos, candado, pct_pago):

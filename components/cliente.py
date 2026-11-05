@@ -301,9 +301,26 @@ def _url_segura(url) -> str:
 
 
 def _supervisor(ctx, f) -> str:
-    """Quién decide por el supervisor: el que la resolvió o, si nadie, el de la ruta."""
-    quien = f['resuelta_por'] or ctx['ruta_sup'].get(f['ruta'], '')
-    return quien.split('@')[0] if quien else 'el supervisor'
+    """Quién autoriza: el que la resolvió o, si nadie todavía, a quien le toca.
+
+    Hasta septiembre autorizaba el supervisor de la ruta lo que levantaba su
+    promotor. v28: lo que levanta el supervisor lo autoriza el GR de su área.
+    """
+    if f['resuelta_por']:
+        quien = f['resuelta_por']
+    elif vc.levanto_supervisor(f):
+        quien = ctx['ruta_area'].get(f['ruta'], '')
+    else:
+        quien = ctx['ruta_sup'].get(f['ruta'], '')
+    return quien.split('@')[0] if quien else ('el GR' if vc.levanto_supervisor(f) else 'el supervisor')
+
+
+def _levanto(f) -> str:
+    """v27: quién la levantó. Desde octubre, el supervisor; antes, el promotor,
+    que se nombra por su ruta."""
+    if vc.levanto_supervisor(f):
+        return f"el supervisor {f['reportada_por'].split('@')[0]}"
+    return f['ruta']
 
 
 def _control(etiqueta, opciones, key, defecto, fmt=str, al_cambiar=None):
@@ -615,7 +632,7 @@ def _cola(ctx):
                         use_container_width=True):
             areas = sorted({a for a in ctx['ruta_area'].values() if a})
             st.multiselect("Área", areas, key="cli_f_area", on_change=_nueva_lista, placeholder="Todas")
-            st.multiselect("Lo que dijo el supervisor", list(SUPERVISOR), format_func=SUPERVISOR.get,
+            st.multiselect("Lo que dijo el supervisor o el GR", list(SUPERVISOR), format_func=SUPERVISOR.get,
                            key="cli_f_sup", on_change=_nueva_lista, placeholder="Todo")
             semanas = sorted(int(s) for s in inc['semana'].dropna().unique())
             st.multiselect("Semana", semanas, format_func=lambda s: f"S{s}", key="cli_f_semana",
@@ -801,7 +818,7 @@ def _reclamo(f):
     r.html(f'<div class="vcard">{_titulo(2, "Qué reclama")}'
            f'<div class="vlab">Motivo</div><div class="vmot">{_e(motivo)}</div>'
            f'<div class="vcom">“{comentario}”</div>{prods_html}'
-           f'<div class="vquien">Levantada por {_e(f["ruta"])}' + (f' · {cuando}' if cuando else '') + '</div></div>')
+           f'<div class="vquien">Levantada por {_e(_levanto(f))}' + (f' · {cuando}' if cuando else '') + '</div></div>')
 
 
 def _valor_celda(tipo, v) -> tuple:
@@ -1003,7 +1020,7 @@ def _historia(ctx, f):
     def punto(color, hueco=False):
         return f'border:2px solid {color}' if hueco else f'background:{color}'
 
-    items = [(punto('#4F7BE8'), f"Levantada por {f['ruta']}", vc.fecha_corta(f['created_at']))]
+    items = [(punto('#4F7BE8'), f"Levantada por {_levanto(f)}", vc.fecha_corta(f['created_at']))]
     quien = _supervisor(ctx, f)
     if f['estado'] == 'AUTORIZADA':
         items.append((punto('#2D8A4E'), f"Autorizada por {quien}", vc.fecha_corta(f['resuelta_en'])))
@@ -1013,7 +1030,9 @@ def _historia(ctx, f):
             detalle += f" · “{f['motivo_rechazo']}”"
         items.append((punto('#D94557'), f"No la autorizó {quien}", detalle))
     else:
-        items.append((punto('#E8A53D'), f"Sin revisar por {quien}", 'El supervisor todavía no la autoriza ni la rechaza.'))
+        items.append((punto('#E8A53D'), f"Sin revisar por {quien}",
+                      ('El GR' if vc.levanto_supervisor(f) else 'El supervisor')
+                      + ' todavía no la autoriza ni la rechaza.'))
 
     hist = get_historial_incidencia(int(f['id']))
     if len(hist):
@@ -1095,7 +1114,7 @@ def _decision(ctx, f, visibles):
         if rechazando:
             r.html('<div class="vdec-t">¿Por qué no se aprueba?</div>')
             motivo = st.pills("Motivo", vc.MOTIVOS_NO, key=f"cli_motivo_{f['id']}", label_visibility="collapsed")
-            comentario = st.text_area("Comentario para el promotor (opcional; obligatorio con «Otro»)",
+            comentario = st.text_area("Comentario (opcional; obligatorio con «Otro»)",
                                       key=f"cli_coment_{f['id']}", height=80, max_chars=500,
                                       placeholder="Por ejemplo: la foto no deja ver el anaquel completo.")
             with st.container(key="vfila_dec"):
@@ -1227,6 +1246,16 @@ def _pct(a, b) -> str:
     return f"{round(a / b * 100)}%" if b else '—'
 
 
+def _quien_levanto(R) -> str:
+    """v27: hasta septiembre las levantaban los promotores; desde octubre, los supervisores."""
+    sup, total = R['de_supervisor'], R['total']
+    if sup == total:
+        return 'levantadas por los supervisores'
+    if sup == 0:
+        return 'levantadas por los promotores'
+    return f'{sup} de supervisores · {total - sup} de promotores'
+
+
 def _resumen(ctx):
     inc = ctx['inc']
     R = vc.resumen(inc, ctx['ruta_area'])
@@ -1234,7 +1263,7 @@ def _resumen(ctx):
         _vacio("Este periodo no tiene incidencias levantadas.")
         return
     r.html('<div class="vheroR">'
-           f'<div><span>Incidencias del mes</span><b>{R["total"]}</b><small>levantadas por los promotores</small></div>'
+           f'<div><span>Incidencias del mes</span><b>{R["total"]}</b><small>{_quien_levanto(R)}</small></div>'
            f'<div><span>Por validar</span><b>{R["pendientes"]}</b><small>'
            + ('ya no falta ninguna' if R['pendientes'] == 0 else f'faltan {R["pendientes"]}') + '</small></div>'
            f'<div><span>Aprobadas</span><b>{R["aprobadas"]}</b><small>{_pct(R["aprobadas"], R["total"])} del total</small></div>'
@@ -1262,8 +1291,8 @@ def _resumen(ctx):
     r.html('<div class="vgrid vg2">'
            f'<div class="vcard"><div class="vct"><div class="vct-h">Por KPI</div><span class="vct-s">aprobadas · no · por validar</span></div>'
            f'{filas_kpi}{leyenda}</div>'
-           f'<div class="vcard"><div class="vct"><div class="vct-h">Lo que dijo el supervisor y lo que decidió el cliente</div></div>'
-           f'<table class="vtab"><tr><th class="vi">Supervisor</th>{cab}</tr>{cruce}</table></div></div>')
+           f'<div class="vcard"><div class="vct"><div class="vct-h">Lo que dijo el supervisor o el GR y lo que decidió el cliente</div></div>'
+           f'<table class="vtab"><tr><th class="vi">Supervisor o GR</th>{cab}</tr>{cruce}</table></div></div>')
 
     filas_area = ''.join(f'<tr><td class="vi">{_e(x["area"])}</td><td>{x["total"]}</td><td>{x["aprobadas"]}</td>'
                          f'<td>{x["no_aprobadas"]}</td><td>{x["pendientes"]}</td></tr>' for x in R['por_area'])

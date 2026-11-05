@@ -7,8 +7,9 @@ Muestra, en este orden:
      en modo solo_lectura, para no mantener dos layouts en paralelo).
   2. Las RESPUESTAS de OOS: cuántas veces contestó cada motivo y cuántas dejó
      sin contestar (que son las que castigan el multiplicador del bono).
-  3. Cuántas incidencias ha levantado en la app, por estado y por tipo.
+  3. Cuántas incidencias tiene su ruta en la app, por estado y por tipo.
      Solo conteo — autorizar/rechazar sigue viviendo en la bandeja del supervisor.
+     v27: desde octubre las levanta el supervisor, no el promotor.
   4. Botón para bajar a las tiendas del promotor.
 
 NOTA TÉCNICA: igual que en tienda_detalle.py, los bloques con loop se construyen
@@ -69,7 +70,7 @@ def render(periodo_id: str, volver_a: str = 'lista_promotores'):
     # ===== 2) RESPUESTAS DE OOS =====
     _render_respuestas_oos(ruta, periodo_id, kpis)
 
-    # ===== 3) INCIDENCIAS LEVANTADAS EN LA APP =====
+    # ===== 3) INCIDENCIAS DE SU RUTA EN LA APP =====
     _render_incidencias_resumen(ruta, periodo_id)
 
     # ===== 4) DRILL A TIENDAS =====
@@ -321,15 +322,16 @@ def _render_oos_semanas(ruta, periodo_id):
 # BLOQUE INCIDENCIAS — solo conteo
 # ============================================================
 def _render_incidencias_resumen(ruta, periodo_id):
-    """Cuántas incidencias levantó el promotor en la app, por estado y por tipo.
-    Solo lectura: autorizar/rechazar vive en la bandeja del resumen del supervisor."""
+    """Cuántas incidencias tiene la ruta en la app, por estado y por tipo.
+    Solo lectura: autorizar/rechazar vive en la bandeja del resumen del supervisor.
+    v27: hasta septiembre las levantaba el promotor; desde octubre, el supervisor."""
     c = get_conteo_incidencias_ruta(ruta, periodo_id)
     total = c.get('TOTAL', 0)
 
     r.html(f"""
     <div style="margin:20px 4px 8px;display:flex;align-items:center;gap:8px;">
         <span style="font-size:18px;">⚠️</span>
-        <p style="font-size:14px;font-weight:500;margin:0;color:{COLOR_NAVY};">Incidencias que ha levantado</p>
+        <p style="font-size:14px;font-weight:500;margin:0;color:{COLOR_NAVY};">Incidencias de su ruta</p>
     </div>
     """)
 
@@ -338,7 +340,7 @@ def _render_incidencias_resumen(ruta, periodo_id):
             f'<div style="background:{COLOR_BLUE_BG};border-radius:10px;padding:14px;text-align:center;'
             f'border:0.5px solid {COLOR_BLUE_BORDER};margin-bottom:8px;">'
             f'<p style="font-size:12px;color:{COLOR_TEXT_SECONDARY};margin:0;">'
-            f'No ha levantado incidencias este periodo.</p></div>'
+            f'Su ruta no tiene incidencias este periodo.</p></div>'
         )
         return
 
