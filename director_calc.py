@@ -472,11 +472,12 @@ def uso_atlas(usuarios: pd.DataFrame, accesos: pd.DataFrame, incidencias: pd.Dat
 
     usuarios: username, tipo, identificador, activo (NUNCA el hash).
     accesos: username, resultado, entro_at.
-    incidencias: ruta, estado, created_at, resuelta_en del periodo.
+    incidencias: ruta, estado, created_at, resuelta_en del periodo (v28: también
+                 origen, PROMOTOR o SUPERVISOR).
     kp: kpis_promotor del periodo, para saber de quién es cada ruta.
     """
     ahora = ahora if ahora is not None else pd.Timestamp.now(tz='UTC')
-    out = {'roles': {}, 'sin_entrar': [], 'incidencias': {}, 'por_supervisor': []}
+    out = {'roles': {}, 'sin_entrar': [], 'incidencias': {}, 'por_supervisor': [], 'por_gr': []}
 
     # --- accesos ---
     u = usuarios.copy() if len(usuarios) else pd.DataFrame(columns=['username', 'tipo', 'identificador', 'activo'])
@@ -520,33 +521,46 @@ def uso_atlas(usuarios: pd.DataFrame, accesos: pd.DataFrame, incidencias: pd.Dat
     inc['created_at'] = pd.to_datetime(inc['created_at'], utc=True, errors='coerce')
     inc['resuelta_en'] = pd.to_datetime(inc['resuelta_en'], utc=True, errors='coerce')
     inc['supervisor'] = inc['ruta'].map(sup_de_ruta)
-    pend = inc['estado'] == 'PENDIENTE'
-    viejas = pend & (inc['created_at'] < ahora - pd.Timedelta(days=dias_pendiente))
-    out['incidencias'] = {
-        'total': int(len(inc)),
-        'autorizadas': int((inc['estado'] == 'AUTORIZADA').sum()),
-        'rechazadas': int((inc['estado'] == 'NO_AUTORIZADA').sum()),
-        'pendientes': int(pend.sum()),
-        'pendientes_viejas': int(viejas.sum()),
-    }
+    inc['area'] = inc['ruta'].map(ruta_area)
+    # v28: desde octubre las levanta el supervisor (origen = SUPERVISOR) y las
+    # valida el GR de su área; antes las levantaba el promotor y las validaba su
+    # supervisor. En las dos, estado es la decisión de quien valida.
+    inc['de_sup'] = (inc['origen'].fillna('').astype(str).str.upper() == 'SUPERVISOR'
+                     if 'origen' in inc else pd.Series(False, index=inc.index))
+    viejo = ahora - pd.Timedelta(days=dias_pendiente)
+
+    def conteo(d):
+        resueltas = d.dropna(subset=['resuelta_en'])
+        dias = ((resueltas['resuelta_en'] - resueltas['created_at']).dt.total_seconds() / 86400).mean() \
+            if len(resueltas) else np.nan
+        pendientes = d['estado'] == 'PENDIENTE'
+        return {'levantadas': int(len(d)), 'levanto_el': int(d['de_sup'].sum()),
+                'autorizadas': int((d['estado'] == 'AUTORIZADA').sum()),
+                'rechazadas': int((d['estado'] == 'NO_AUTORIZADA').sum()),
+                'pendientes': int(pendientes.sum()),
+                'pendientes_viejas': int((pendientes & (d['created_at'] < viejo)).sum()),
+                'dias_resolver': _n(dias)}
+
+    c = conteo(inc)
+    out['incidencias'] = {'total': c['levantadas'], 'de_supervisor': c['levanto_el'],
+                          'autorizadas': c['autorizadas'], 'rechazadas': c['rechazadas'],
+                          'pendientes': c['pendientes'], 'pendientes_viejas': c['pendientes_viejas']}
 
     sups = kp[['supervisor']].dropna().drop_duplicates('supervisor') if len(kp) else pd.DataFrame(columns=['supervisor'])
     for _, s in sups.iterrows():
-        d = inc[inc['supervisor'] == s['supervisor']]
-        resueltas = d.dropna(subset=['resuelta_en'])
-        dias = ((resueltas['resuelta_en'] - resueltas['created_at']).dt.total_seconds() / 86400).mean() if len(resueltas) else np.nan
-        pendientes = d['estado'] == 'PENDIENTE'
         out['por_supervisor'].append({
             'supervisor': s['supervisor'],
             'sup': nombre_corto(s['supervisor']),
             'area': ruta_area.get(kp.loc[kp['supervisor'] == s['supervisor'], 'ruta'].iloc[0]) if len(kp) else None,
-            'levantadas': int(len(d)),
-            'autorizadas': int((d['estado'] == 'AUTORIZADA').sum()),
-            'rechazadas': int((d['estado'] == 'NO_AUTORIZADA').sum()),
-            'pendientes': int(pendientes.sum()),
-            'pendientes_viejas': int((pendientes & (d['created_at'] < ahora - pd.Timedelta(days=dias_pendiente))).sum()),
-            'dias_resolver': _n(dias),
+            **conteo(inc[inc['supervisor'] == s['supervisor']]),
         })
     # Primero quien tiene más incidencias esperando.
     out['por_supervisor'].sort(key=lambda x: (-x['pendientes_viejas'], -x['pendientes'], -x['levantadas']))
+
+    # v28: por GR, que es quien valida lo que levantan sus supervisores.
+    for area in sorted({a for a in ruta_area.values() if a}):
+        d = inc[inc['area'] == area]
+        if len(d):
+            out['por_gr'].append({'area': area, **conteo(d)})
+    out['por_gr'].sort(key=lambda x: (-x['pendientes_viejas'], -x['pendientes'], x['area']))
     return out

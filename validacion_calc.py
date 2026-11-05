@@ -23,6 +23,13 @@ aplica una incidencia aprobada (celda v7.3 del cuaderno):
   - Una semana con incidencia de visita de TRAX no se toca: no entra al
     promedio de todos modos.
 Si esas reglas cambian en el cuaderno, hay que cambiar hechos() también.
+
+v27: desde octubre las incidencias las levanta el supervisor. Con esas mismas
+reglas, semanas_reclamables() le dice en qué semanas una incidencia sí cambia
+algo, y también cambia ahí si las reglas cambian.
+
+v28: la del supervisor nace pendiente y la autoriza o rechaza su GR (el area
+manager); la columna estado guarda esa decisión, como antes la del supervisor.
 """
 import io
 import json
@@ -76,7 +83,7 @@ TEXTO_EXCEL = {APROBADA: 'Aprobada', NO_APROBADA: 'No aprobada', PENDIENTE: None
 
 _TEXTOS = ('ruta', 'periodo_id', 'tienda', 'cadena', 'canal', 'comentario', 'reportada_por', 'created_at',
            'link_trax', 'resuelta_por', 'resuelta_en', 'motivo_rechazo', 'incidencia', 'categoria',
-           'validada_por', 'validada_en', 'motivo_cliente', 'comentario_cliente')
+           'validada_por', 'validada_en', 'motivo_cliente', 'comentario_cliente', 'origen')
 _URL = re.compile(r'https?://[^\s<>"\']+', re.IGNORECASE)
 
 
@@ -225,7 +232,7 @@ RANGO_SUPERVISOR = {'AUTORIZADA': 0, 'PENDIENTE': 1, 'NO_AUTORIZADA': 2}
 
 
 def ordenar(df: pd.DataFrame) -> pd.DataFrame:
-    """El orden de la cola: primero lo que el supervisor autorizó, luego lo que
+    """El orden de la cola: primero lo autorizado (por el supervisor o el GR), luego lo que
     no ha revisado y al final lo que rechazó. Dentro, por tienda, KPI y semana,
     para que la serie de una misma tienda quede junta."""
     if len(df) == 0:
@@ -470,6 +477,69 @@ def hechos(tipo, semana, sem: dict, mes: dict, es_ps: bool) -> list:
     return salida
 
 
+# ------------------------------------------------------------
+# Lo que levanta el supervisor (v27)
+# ------------------------------------------------------------
+def levanto_supervisor(f) -> bool:
+    """La levantó un supervisor (v27: desde octubre solo ellos levantan).
+
+    v28: lo dice la columna origen ('SUPERVISOR' o 'PROMOTOR', ver
+    12_atlas_v28.sql). Ya no se puede deducir de quién la resolvió, porque la
+    del supervisor nace pendiente y la valida su GR.
+    """
+    return texto(f.get('origen')).upper() == 'SUPERVISOR'
+
+
+def de_supervisor(df: pd.DataFrame) -> pd.Series:
+    """levanto_supervisor() renglón por renglón."""
+    if df is None or len(df) == 0:
+        return pd.Series(dtype=bool)
+    return df.apply(levanto_supervisor, axis=1).astype(bool)
+
+
+def semanas_reclamables(valores: dict, periodo_id, tipo, ocupadas: dict = None):
+    """Las semanas del mes en que una incidencia de este KPI sí cambiaría algo.
+
+    valores = valores_semana() de la tienda. ocupadas = {semana: folio} de las
+    incidencias de este KPI que siguen vivas (ni rechazadas por el supervisor o el GR ni
+    no aprobadas por el cliente). Regresa (opciones, fuera):
+      opciones = [(semana, etiqueta)], las que se pueden elegir;
+      fuera    = [(semana, por qué no)].
+    Quedan fuera las semanas en que aprobarla no cambia nada según las reglas del
+    cierre, las mismas de hechos(): ya cumplía, TRAX marcó incidencia de visita,
+    o en OOS no quedó nada sin contestar. Y las que ya tienen una incidencia
+    viva, porque sería duplicarla.
+
+    Las etiquetas van cortas ("S35 · 8.47%"): elegidas se vuelven fichas que en
+    el celular cortan el texto largo. El objetivo va en el título del campo.
+    """
+    ocupadas = ocupadas or {}
+    opciones, fuera = [], []
+    semanas = sorted((s, sem) for (pid, s), sem in valores.items() if pid == periodo_id)
+    for s, sem in semanas:
+        if s in ocupadas:
+            fuera.append((s, f"ya tiene la {ocupadas[s]}"))
+        elif sem.get('trax'):
+            fuera.append((s, 'TRAX marcó incidencia de visita'))
+        elif tipo == 'OOS':
+            if sem['sin_obj']:
+                fuera.append((s, 'no tenía encuestas'))
+            elif sem['nc'] == 0:
+                fuera.append((s, 'no quedó ninguna sin contestar'))
+            else:
+                opciones.append((s, f"S{s} · {sem['nc']} sin contestar"))
+        elif sem.get('sin_dato'):
+            opciones.append((s, f"S{s} · sin dato"))
+        elif sem['sin_obj']:
+            opciones.append((s, f"S{s} · {valor_txt(tipo, sem['v'])}, sin objetivo"))
+        elif sem['llega']:
+            fuera.append((s, 'ya cumplía'))
+        else:
+            etiqueta = f"S{s} · {valor_txt(tipo, sem['v'])}"
+            opciones.append((s, etiqueta + (' (empata)' if sem.get('empata') else '')))
+    return opciones, fuera
+
+
 def tira(serie: pd.DataFrame, valores: dict, semanas: list, id_actual, maximo=SEMANAS_TIRA) -> dict:
     """La tira semana por semana de una serie (misma tienda y KPI).
 
@@ -556,7 +626,9 @@ def resumen(df: pd.DataFrame, ruta_area: dict = None) -> dict:
     salida['por_kpi'] = [dict(kpi=k, **conteo(df[df['tipo'] == k])) for k in KPIS] if total else []
     areas = df['ruta'].map(lambda r: ruta_area.get(r) or 'Sin área') if total else pd.Series(dtype=str)
     salida['por_area'] = [dict(area=a, **conteo(df[areas == a])) for a in sorted(areas.unique())] if total else []
-    # Lo que dijo el supervisor contra lo que decidió el cliente.
+    # Lo que dijo quien autoriza (el supervisor hasta septiembre; desde la v28,
+    # el GR) contra lo que decidió el cliente.
+    salida['de_supervisor'] = int(de_supervisor(df).sum()) if total else 0
     salida['cruce'] = {(s, c): int(((df['estado'] == s) & (est == c)).sum())
                        for s in ('AUTORIZADA', 'NO_AUTORIZADA', 'PENDIENTE') for c in ESTADOS_CLIENTE} if total else {}
     motivos = df.loc[est == NO_APROBADA, 'motivo_cliente'] if total else pd.Series(dtype=str)
