@@ -173,11 +173,12 @@ def _restaurar_sesion() -> bool:
     Si lo logra deja todo listo para que el router siga de largo en este mismo
     render: el promotor no alcanza a ver el login ni por un parpadeo.
     """
-    username = sesion.restaurar()
-    if not username:
+    leido = sesion.restaurar_completo()
+    if not leido:
         return False
+    username, emitido = leido
 
-    usuario = recuperar_usuario(username)
+    usuario = recuperar_usuario(username, emitido)
     if not usuario:
         # La firma venía bien, pero el usuario ya no existe, lo desactivaron o
         # se le venció la contraseña. La cookie sobra: que se vaya.
