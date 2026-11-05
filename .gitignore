@@ -1,0 +1,15 @@
+# v26: lo que NUNCA va al repo.
+# Las llaves de Supabase y de la cookie de sesión viven solo en los secretos de
+# Streamlit Cloud.
+.streamlit/secrets.toml
+*.toml.bak
+secrets_agregar.toml
+
+# Contraseñas y archivos de entrega
+CONTRASENA*.txt
+CONTRASENAS*.txt
+
+# Python
+__pycache__/
+*.pyc
+.venv/
