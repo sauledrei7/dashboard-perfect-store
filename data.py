@@ -400,9 +400,16 @@ import uuid as _uuid
 from datetime import datetime as _dt
 
 
-def comprimir_foto(file_bytes: bytes, max_lado: int = 1280, calidad: int = 72) -> bytes:
+class FotoInvalida(ValueError):
+    """v26: lo que llegó como foto no es una imagen que se pueda abrir."""
+
+
+def comprimir_foto(file_bytes: bytes, max_lado: int = 1280, calidad: int = 72,
+                   estricta: bool = False) -> bytes:
     """Comprime y redimensiona una foto para subirla ligera (celular con datos móviles).
-    Devuelve JPEG. Si Pillow no está o falla, devuelve los bytes originales.
+    Devuelve JPEG. Si Pillow no está o falla, devuelve los bytes originales; con
+    estricta=True lanza FotoInvalida, para no subir al bucket público algo que no
+    es una imagen (v26).
 
     v22: se llama al AGREGAR la foto al formulario, no solo al guardar, para que
     la sesión no cargue fotos de 10 MB. Si la foto ya viene como JPG del tamaño
@@ -430,6 +437,8 @@ def comprimir_foto(file_bytes: bytes, max_lado: int = 1280, calidad: int = 72) -
         return out.getvalue()
     except Exception as e:
         print(f"[COMPRIMIR_FOTO WARN] {e}")
+        if estricta:
+            raise FotoInvalida(str(e)) from e
         return file_bytes
 
 
@@ -440,7 +449,7 @@ def subir_foto_incidencia(file_bytes: bytes, ruta: str, curt: str) -> str:
     """Comprime y sube una foto al bucket PÚBLICO 'incidencias'.
     Devuelve la URL pública permanente (clicable en el CSV)."""
     sb = _get_client()
-    comprimida = comprimir_foto(file_bytes)
+    comprimida = comprimir_foto(file_bytes, estricta=True)
     stamp = _dt.now().strftime('%Y%m%d_%H%M%S')
     nombre = f"{ruta}/{curt}_{stamp}_{_uuid.uuid4().hex[:8]}.jpg"
     sb.storage.from_('incidencias').upload(
@@ -458,6 +467,10 @@ def guardar_incidencia(curt: str, ruta: str, periodo_id: str, tipo: str,
                        categoria: str = None, productos: list = None) -> bool:
     """Inserta una incidencia. fotos_paths: lista de 1 a 3 rutas de Storage.
     La incidencia nace en estado PENDIENTE (default de la tabla).
+
+    v27: era la del formulario del promotor, que ya no levanta. El supervisor
+    usa guardar_incidencias(), al final del archivo. Se queda para que un
+    components/incidencias.py de antes siga funcionando mientras se sube la v27.
 
     v13: 'tipo' es el KPI afectado; 'incidencia' es el motivo específico.
     'categoria' y 'productos' solo se llenan cuando el motivo es de producto
@@ -568,18 +581,23 @@ def get_productos(kpi: str = None, categoria: str = None) -> pd.DataFrame:
 
 def resolver_incidencia(incidencia_id: int, autorizar: bool, resuelta_por: str,
                         motivo_rechazo: str = None) -> bool:
-    """v11: el supervisor autoriza o rechaza una incidencia.
-    autorizar=True → AUTORIZADA; False → NO_AUTORIZADA."""
-    from datetime import datetime as _dt2
+    """Autoriza o rechaza una incidencia: autorizar=True → AUTORIZADA; False → NO_AUTORIZADA.
+    Hasta septiembre lo hacía el supervisor (v11); desde la v28, el GR.
+
+    v28: solo cambia si sigue PENDIENTE. Así, si ya la validaron en otra pestaña,
+    no se pisa esa decisión: regresa False y la pantalla avisa.
+    """
+    from datetime import datetime as _dt2, timezone as _tz2
     sb = _get_client()
     registro = {
         'estado': 'AUTORIZADA' if autorizar else 'NO_AUTORIZADA',
         'resuelta_por': resuelta_por,
-        'resuelta_en': _dt2.now().isoformat(),
+        'resuelta_en': _dt2.now(_tz2.utc).isoformat(),
         'motivo_rechazo': (motivo_rechazo or None) if not autorizar else None,
     }
-    sb.table('incidencias').update(registro).eq('id', int(incidencia_id)).execute()
-    return True
+    r = (sb.table('incidencias').update(registro)
+           .eq('id', int(incidencia_id)).eq('estado', 'PENDIENTE').execute())
+    return bool(r.data)
 
 
 @st.cache_data(ttl=60, show_spinner=False)
@@ -593,15 +611,17 @@ def get_incidencias_de_tienda(curt: str, periodo_id: str) -> pd.DataFrame:
 def get_incidencias_periodo(periodo_id: str, area_manager: str = None,
                             supervisor: str = None, ruta: str = None) -> pd.DataFrame:
     """Todas las incidencias del periodo, con filtro opcional por ámbito.
-    Se usa para el export a Excel."""
-    sb = _get_client()
-    q = sb.table('incidencias').select('*').eq('periodo_id', periodo_id)
+    Se usa para el export a Excel.
+
+    v26: con _leer_todo, en tandas. Una sola consulta se quedaba en las primeras
+    1,000 filas sin avisar (el tope de la API), y un mes grande perdía incidencias."""
+    eq = {'periodo_id': periodo_id}
     if ruta:
-        q = q.eq('ruta', ruta)
-    r = q.order('created_at', desc=True).execute()
-    df = pd.DataFrame(r.data) if r.data else pd.DataFrame()
+        eq['ruta'] = ruta
+    df = _leer_todo('incidencias', '*', eq=eq)
     if len(df) == 0:
         return df
+    df = df.sort_values('created_at', ascending=False)
     # Filtros por supervisor/AM: mapear vía kpis_promotor (ruta -> supervisor/am)
     if (supervisor or area_manager):
         kp = get_promotores_de_supervisor(supervisor, periodo_id) if supervisor \
@@ -636,8 +656,9 @@ def get_incidencias_ambito(periodo_id: str, area_manager: str = None,
 
 @st.cache_data(ttl=60, show_spinner=False)
 def get_conteo_incidencias_ruta(ruta: str, periodo_id: str) -> dict:
-    """v12: Cuántas incidencias levantó ESTE promotor en la app, por estado y por tipo.
-    Solo conteos (la autorización sigue viviendo en la bandeja del supervisor)."""
+    """v12: Cuántas incidencias tiene ESTA ruta en la app, por estado y por tipo.
+    Solo conteos (la autorización sigue viviendo en la bandeja del supervisor).
+    v27: desde octubre las levanta el supervisor, con la ruta de la tienda."""
     vacio = {'TOTAL': 0, 'PENDIENTES': 0, 'AUTORIZADAS': 0, 'NO_AUTORIZADAS': 0, 'POR_TIPO': {}}
     try:
         sb = _get_client()
@@ -895,9 +916,11 @@ def get_resumen_director(periodo_id: str) -> dict:
 
 @st.cache_data(ttl=TTL_VIVO, show_spinner=False)
 def get_incidencias_director(periodo_id: str) -> pd.DataFrame:
-    """Incidencias del periodo, sin fotos ni comentarios: solo lo que se cuenta."""
+    """Incidencias del periodo, sin fotos ni comentarios: solo lo que se cuenta.
+    v28: con su origen (PROMOTOR o SUPERVISOR), para contar las que levantan
+    los supervisores."""
     try:
-        return _leer_todo('incidencias', 'ruta, tipo, incidencia, estado, created_at, resuelta_en',
+        return _leer_todo('incidencias', 'ruta, tipo, incidencia, estado, created_at, resuelta_en, origen',
                           eq={'periodo_id': periodo_id})
     except Exception as e:
         print(f"[DIRECTOR INCIDENCIAS] {e}")
@@ -955,7 +978,8 @@ def limpiar_cache_director():
                     get_incidencias_director, get_conteo_incidencias_director,
                     get_uso_director, listar_periodos,
                     get_kpis_cliente, get_periodos_con_precios, get_exh_escenas_tienda,
-                    get_catalogo_tiendas, get_ficha_tienda, get_equipo_rutas):
+                    get_catalogo_tiendas, get_ficha_tienda, get_equipo_rutas,
+                    get_ventanas_incidencias):
         funcion.clear()
 
 
@@ -1212,3 +1236,61 @@ def get_equipo_rutas(periodo_id: str) -> dict:
     ruta_area, _ = dc.mapa_areas(t.get('kp_reciente', t['kp']))
     return {str(x['ruta']): (x.get('supervisor'), ruta_area.get(x['ruta']) or x.get('area_manager'))
             for x in t['kp'].drop_duplicates('ruta').to_dict('records')}
+
+
+# ============================================================
+# INCIDENCIAS DEL SUPERVISOR  (v27)
+#
+# Desde octubre las incidencias ya no las levanta el promotor: las levanta su
+# supervisor, y solo cuando ya está cargada la última semana TRAX del mes. Una
+# misma incidencia puede cubrir varias semanas: se guarda una fila por semana,
+# porque el cierre aprueba y aplica cada KPI semana por semana. v28: nacen
+# pendientes y las valida el GR del área (origen = 'SUPERVISOR').
+#
+# Cuándo se puede lo dice periodos, que llena el cuaderno semanal (ver
+# 11_incidencias_supervisor_v27.sql):
+#   incidencias_abiertas  True cuando la corrida ya trae la última semana del
+#                         mes. El cierre (v7.3) no la escribe y queda en false:
+#                         así se cierran solas al subir el cierre.
+#   ultima_semana_mes     la última semana TRAX del mes, para decir con cuál se
+#                         abren mientras no llega.
+# ============================================================
+@st.cache_data(ttl=TTL_VIVO, show_spinner=False)
+def get_ventanas_incidencias() -> dict:
+    """{periodo_id: {'abiertas', 'ultima_semana', 'semana_fin', 'mes'}} de todos los periodos.
+
+    Si falla la lectura (por ejemplo, todavía no se corre el SQL de la v27 y las
+    columnas no existen), regresa {}: nadie puede levantar, que es lo seguro.
+    """
+    try:
+        r = (_get_client().table('periodos')
+             .select('periodo_id, mes, semana_fin, ultima_semana_mes, incidencias_abiertas').execute())
+    except Exception as e:
+        print(f"[VENTANA INCIDENCIAS] {e}")
+        return {}
+
+    def entero(v):
+        try:
+            return None if v is None or pd.isna(v) else int(v)
+        except (TypeError, ValueError):
+            return None
+
+    return {x['periodo_id']: {'abiertas': x.get('incidencias_abiertas') is True,
+                              'ultima_semana': entero(x.get('ultima_semana_mes')),
+                              'semana_fin': entero(x.get('semana_fin')),
+                              'mes': str(x.get('mes') or x['periodo_id']).strip().capitalize()}
+            for x in (r.data or [])}
+
+
+def guardar_incidencias(filas: list) -> list:
+    """v27: inserta varias incidencias de un jalón (una por semana).
+
+    Es una sola instrucción INSERT: o entran todas o no entra ninguna. v28:
+    nacen PENDIENTES (el default de la tabla) y traen origen = 'SUPERVISOR';
+    el SQL de la v28 deja llenar origen, pero no estado: una incidencia no
+    puede nacer autorizada.
+    """
+    if not filas:
+        return []
+    r = _get_client().table('incidencias').insert(list(filas)).execute()
+    return r.data or []
