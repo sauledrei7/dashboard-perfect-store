@@ -16,17 +16,10 @@ streamlit run app.py
 
 Se abre en `http://localhost:8501`.
 
-## 🔑 Credenciales de prueba
+## 🔑 Credenciales
 
-Todas las contraseñas siguen el patrón `{username}_2026`.
-
-| Usuario | Contraseña | Qué verás |
-|---|---|---|
-| `promotor_43` | `promotor_43_2026` | 🔒 Candado cerrado |
-| `promotor_159` | `promotor_159_2026` | 100% bono |
-| `promotor_146` | `promotor_146_2026` | Bono bajo |
-| `supervisor20` | `supervisor20_2026` | 🔒 Supervisor candado cerrado |
-| `supervisor14` | `supervisor14_2026` | Mejor supervisor |
+Las contraseñas **no se documentan aquí** (ni en ningún archivo del repo). Se
+entregan a cada persona por un canal privado.
 
 ## 📁 Estructura
 
@@ -57,10 +50,12 @@ Al cambiar, se actualiza toda la pantalla con los datos de ese mes.
 ## 🔐 Seguridad
 
 - HTTPS automático (cuando deploy en Streamlit Cloud)
-- Contraseñas hasheadas con bcrypt (no en texto plano)
+- Contraseñas hasheadas con bcrypt (no en texto plano), verificadas en Python
 - Base de datos Supabase con cifrado AES-256
-- Row Level Security activado
+- Row Level Security activado; el filtro por rol se hace en el código de la app
 - `.streamlit/secrets.toml` NUNCA se sube a GitHub (está en `.gitignore`)
+- Todo texto que escribe una persona se escapa antes de pintarse en HTML
+  (`render.texto()` y `render.url()`)
 
 ## 🌐 Deploy a producción
 
