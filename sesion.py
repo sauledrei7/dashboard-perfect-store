@@ -108,18 +108,27 @@ def _firma(payload: str, llave: str) -> str:
 
 
 def crear_token(username: str, horas: int = None):
-    """Arma el token firmado. None si no hay llave configurada."""
+    """Arma el token firmado. None si no hay llave configurada.
+
+    v26: lleva también cuándo se emitió (iat). Así, si a alguien le cambian la
+    contraseña, las sesiones que tenía abiertas de antes ya no sirven.
+    """
     llave = _secreto()
     if not llave or not username:
         return None
     horas = HORAS_VIGENCIA if horas is None else horas
-    cuerpo = {"u": username, "exp": int(time.time()) + int(horas) * 3600}
+    ahora = int(time.time())
+    cuerpo = {"u": username, "iat": ahora, "exp": ahora + int(horas) * 3600}
     payload = _b64(json.dumps(cuerpo, separators=(",", ":")).encode())
     return payload + "." + _firma(payload, llave)
 
 
-def leer_token(token: str):
-    """Username si la firma cuadra y no ha vencido. None en cualquier otro caso."""
+def leer_token_completo(token: str):
+    """(username, emitido) si la firma cuadra y no ha vencido; None si no.
+
+    emitido = epoch en que se armó el token. Los tokens de antes de la v26 no lo
+    traen: se toma exp menos la vigencia, que es cuando se armaron.
+    """
     llave = _secreto()
     if not llave or not token or "." not in token:
         return None
@@ -134,20 +143,28 @@ def leer_token(token: str):
     try:
         cuerpo = json.loads(_des_b64(payload))
         vence = int(cuerpo.get("exp", 0))
+        emitido = int(cuerpo.get("iat", vence - HORAS_VIGENCIA * 3600))
     except Exception:
         return None
 
     if vence < time.time():
         return None
 
-    return (cuerpo.get("u") or "").strip() or None
+    username = (cuerpo.get("u") or "").strip()
+    return (username, emitido) if username else None
+
+
+def leer_token(token: str):
+    """Username si la firma cuadra y no ha vencido. None en cualquier otro caso."""
+    leido = leer_token_completo(token)
+    return leido[0] if leido else None
 
 
 # ============================================================
 # COOKIE
 # ============================================================
-def restaurar():
-    """Username guardado en el celular, o None.
+def restaurar_completo():
+    """(username, emitido) guardado en el celular, o None.
 
     Es síncrono: lee de los encabezados que el navegador ya mandó, así que
     sirve en el primer render — justo cuando la pestaña se acaba de recargar,
@@ -159,7 +176,14 @@ def restaurar():
         return None
     if not token:
         return None
-    return leer_token(token)
+    return leer_token_completo(token)
+
+
+def restaurar():
+    """Username guardado en el celular, o None. Se queda por compatibilidad: el
+    app.py de antes de la v26 llama a esta."""
+    leido = restaurar_completo()
+    return leido[0] if leido else None
 
 
 def _manager():
@@ -221,6 +245,9 @@ def guardar(username) -> bool:
             # exactamente como abren la app (el link que traen en WhatsApp).
             # Con strict, el arreglo no serviría en el caso más común.
             same_site="lax",
+            # v26: solo viaja por https (la app vive en https; localhost también
+            # cuenta como seguro para el navegador, así que el banco sigue igual).
+            secure=True,
         )
         return True
     except Exception as e:

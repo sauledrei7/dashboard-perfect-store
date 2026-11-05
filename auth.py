@@ -136,7 +136,24 @@ def autenticar(input_usuario: str, password: str) -> dict:
         return None
 
 
-def recuperar_usuario(username: str) -> dict:
+def _cambio_password_despues(row: dict, emitido) -> bool:
+    """v26: ¿se le cambió la contraseña después de que se armó la cookie?
+
+    Entonces esa sesión ya no vale: sirve para sacar a quien entró con una
+    contraseña que se acaba de cambiar (por ejemplo, porque alguien más la sabía).
+    Se deja un minuto de holgura por la diferencia de reloj entre el servidor de
+    la app y la base.
+    """
+    if not emitido or not row.get('password_creada'):
+        return False
+    try:
+        creada = datetime.fromisoformat(str(row['password_creada']).replace('Z', '+00:00'))
+        return creada.timestamp() > float(emitido) + 60
+    except Exception:
+        return False
+
+
+def recuperar_usuario(username: str, emitido: float = None) -> dict:
     """v17: relee al usuario para restaurar una sesión desde la cookie.
 
     A propósito NO recibe contraseña: la firma de la cookie ya probó quién es.
@@ -145,13 +162,16 @@ def recuperar_usuario(username: str) -> dict:
     alguien con la ruta vieja, ni deja entrar a quien ya fue dado de baja o a
     quien se le venció la contraseña mientras tanto.
 
+    emitido (v26) = cuándo se armó la cookie. Si la contraseña cambió después,
+    la cookie ya no sirve.
+
     Devuelve None si por cualquier razón no debe pasar; el que llama se encarga
     de mandarlo al login.
     """
     try:
         sb = _get_client()
         r = sb.table('usuarios').select(
-            'tipo, identificador, nombre, activo, password_expira'
+            'tipo, identificador, nombre, activo, password_expira, password_creada'
         ).eq('username', username).limit(1).execute()
 
         if not r.data:
@@ -164,7 +184,9 @@ def recuperar_usuario(username: str) -> dict:
             _registrar_acceso(username, 'INACTIVO', tipo, ident)
             return None
 
-        if _esta_vencida(row):
+        if _esta_vencida(row) or _cambio_password_despues(row, emitido):
+            # La bitácora solo admite estos resultados; una sesión vieja tras un
+            # cambio de contraseña cuenta como vencida.
             _registrar_acceso(username, 'EXPIRADA', tipo, ident)
             return None
 
